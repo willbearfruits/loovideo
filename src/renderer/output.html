@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>loovideo — output</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        cursor: none;
+      }
+      canvas {
+        display: block;
+      }
+      #hud {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 10;
+        font: 11px/1.5 ui-monospace, 'Cascadia Mono', monospace;
+        color: #7dffb0;
+        background: rgba(0, 0, 0, 0.45);
+        padding: 6px 9px;
+        border-radius: 4px;
+        pointer-events: none;
+        white-space: pre;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud"></div>
+    <script type="module" src="/output/main.ts"></script>
+  </body>
+</html>

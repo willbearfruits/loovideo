@@ -1,0 +1,38 @@
+{
+  "name": "loovideo",
+  "version": "0.1.0",
+  "description": "Realtime audio-reactive visual instrument — characters, particles, flora, images",
+  "author": "willbearfruits",
+  "license": "MIT",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
+    "start": "electron-vite preview",
+    "package:linux": "electron-vite build && electron-builder --linux",
+    "package:win": "electron-vite build && electron-builder --win",
+    "ctl": "node scripts/ctl.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "simplex-noise": "^4.0.3",
+    "three": "^0.185.1",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/three": "^0.185.4",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  }
+}
