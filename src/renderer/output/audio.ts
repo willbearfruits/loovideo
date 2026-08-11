@@ -187,8 +187,10 @@ export class AudioEngine {
     }
     flux /= fluxHi - fluxLo
     this.fluxAvg += (flux - this.fluxAvg) * Math.min(1, dt * 2)
-    if (flux > this.fluxAvg * 1.6 + 0.012) this.onsetEnv = 1
+    // decay BEFORE triggering: the trigger frame must read exactly 1, or at
+    // low frame rates onset never crosses the 0.85 the edge-detectors expect
     this.onsetEnv *= Math.exp(-dt * 9)
+    if (flux > this.fluxAvg * 1.6 + 0.012) this.onsetEnv = 1
     f.onset = this.onsetEnv
     f.silence = this.updateSilence(dt, f.level)
 
@@ -235,8 +237,8 @@ export class AudioEngine {
     }
     f.level = Math.min(1, (level / 8) * 1.8)
     const beatPhase = (t * 0.9) % 1
+    this.onsetEnv *= Math.exp(-dt * 9) // decay before trigger — see live path
     if (beatPhase < 0.03 && gate > 0.5) this.onsetEnv = 1
-    this.onsetEnv *= Math.exp(-dt * 9)
     f.onset = this.onsetEnv
     f.silence = this.updateSilence(dt, f.level)
     f.active = true

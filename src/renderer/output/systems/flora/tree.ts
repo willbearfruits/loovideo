@@ -208,6 +208,7 @@ export class Tree {
   private tickBudget = 0
   private stall = 0
   private lastOnset = 0
+  private ambientCarry = 0
   private maxDepth = 1
   private falling: Leaf[] = []
   private leafShed = 0
@@ -886,6 +887,30 @@ export class Tree {
     // tree, spring and summer barely let go at all
     const season = seasonLeaf(d.season)
     this.seasonFall = season.fall
+
+    // ambient release: a canopy in leaf is never entirely still — a slow
+    // steady drift of leaves lets go, more in wind, far more in autumn.
+    // Onsets shake a small burst loose. (Tips are not killed; the tree only
+    // loses the leaf, dieback is what takes the wood.)
+    if (d.leaves > 0.05 && this.liveCount > 120 && this.fellT === 0 && season.size > 0.05) {
+      this.ambientCarry +=
+        dt * d.leaves * (0.5 + d.wind * 1.2) * (0.35 + season.fall) * 2.1
+      if (d.onset > 0.85 && this.lastOnset <= 0.85) this.ambientCarry += 2 + d.scatter * 4
+      while (this.ambientCarry >= 1 && this.falling.length < 300) {
+        this.ambientCarry -= 1
+        const tip = this.pickTip()
+        if (tip < 0) break
+        this.falling.push({
+          x: this.swayX[tip],
+          y: this.swayY[tip],
+          vx: (Math.random() - 0.5) * 20 * u,
+          vy: (6 + Math.random() * 12) * u,
+          life: 1,
+          phase: Math.random() * Math.PI * 2
+        })
+      }
+      if (this.ambientCarry > 8) this.ambientCarry = 0
+    }
     if (season.fall > 0.6 && this.liveCount > 60) {
       this.leafFallCarry += dt * (season.fall - 0.6) * 9 * d.leaves
       while (this.leafFallCarry >= 1 && this.falling.length < 300) {
@@ -925,9 +950,17 @@ export class Tree {
     for (let i = this.falling.length - 1; i >= 0; i--) {
       const L = this.falling[i]
       L.phase += dt * 2.2
-      L.x += (L.vx + Math.sin(L.phase) * 26 * u * (0.4 + d.wind)) * dt
-      L.y += L.vy * dt
-      if (L.y > d.horizonY) L.life -= dt * 2.5
+      if (L.y >= d.horizonY) {
+        // came to rest: lie on the ground line and fade out slowly, sliding a
+        // little when the wind gusts
+        L.y = d.horizonY
+        L.x += L.vx * dt * 0.3 + Math.sin(L.phase * 0.5) * 4 * u * d.wind * dt
+        L.vx *= 1 - Math.min(1, dt * 3)
+        L.life -= dt * 0.5
+      } else {
+        L.x += (L.vx + Math.sin(L.phase) * 26 * u * (0.4 + d.wind)) * dt
+        L.y += L.vy * dt
+      }
       if (L.life <= 0) this.falling.splice(i, 1)
     }
   }

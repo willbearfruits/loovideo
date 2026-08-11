@@ -37,6 +37,7 @@ export class FloraSystem implements VisualSystem {
   private flock = new Flock()
   private trees: Tree[] = []
   private treeFade: number[] = []
+  private sproutClock = 0
   private stars = new Stars()
   private scenery = new Scenery()
   private fauna = new Fauna()
@@ -205,6 +206,23 @@ export class FloraSystem implements VisualSystem {
 
       for (const t of this.trees) t.update(dt, time, w, h, drive)
 
+      // Sprouting: sometimes a new tree simply takes root. The clock only
+      // advances while music plays (a sprout is a growth event, and growth
+      // stops with the room), and the seedling appears on the next strong
+      // onset once enough music has passed — so new trees arrive ON a hit,
+      // never mid-nothing. Grove cap still applies.
+      const sprout = p.num('flora.sprout')
+      if (sprout > 0.01 && this.trees.length < MAX_TREES && this.treeSpec) {
+        this.sproutClock += dt * sprout * (0.15 + drive.level * 1.6) * (1 - drive.silence)
+        if (this.sproutClock > 14 && drive.onset > 0.85) {
+          this.sproutClock = 0
+          const t = new Tree()
+          this.plantSprout(t)
+          this.trees.push(t)
+          this.treeFade.push(0)
+        }
+      }
+
       // a felled tree is replanted where it stood, and grows back from nothing
       for (let i = 0; i < this.trees.length; i++) {
         if (this.trees[i].felled) {
@@ -297,6 +315,21 @@ export class FloraSystem implements VisualSystem {
   }
 
   /** (Re)seed one slot of the grove — used at build time and by succession. */
+  /** A volunteer seedling: random ground, small stature, its own species. */
+  private plantSprout(t: Tree): void {
+    const s = this.treeSpec
+    if (!s) return
+    const f = 0.08 + Math.random() * 0.84
+    const scale = 0.4 + Math.random() * 0.35
+    const species: TreeKind[] = ['oak', 'pine', 'willow', 'birch', 'sapling']
+    const kind: TreeKind =
+      s.kind === 'mixed' || Math.random() < 0.5
+        ? species[(Math.random() * species.length) | 0]
+        : (s.kind as TreeKind)
+    const share = Math.max(1200, Math.floor(s.share * 0.45))
+    t.reset(s.w, s.h, s.density, s.horizonY, s.w * f, scale, share, kind)
+  }
+
   private plantTree(t: Tree, i: number, nTrees: number): void {
     const s = this.treeSpec
     if (!s) return

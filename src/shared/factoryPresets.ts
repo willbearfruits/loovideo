@@ -234,6 +234,7 @@ export const FACTORY_PRESETS: Record<string, PresetPatch> = {
       'flora.palette': 'ink',
       'flora.endless': true,
       'flora.trees': 4,
+      'flora.sprout': 0.45,
       'flora.reach': 1.45,
       'flora.fit': 0.85,
       'flora.density': 0.8,

@@ -166,6 +166,7 @@ export const PARAMS: ParamDef[] = [
   n('flora.vigor', 'Vigor', 0, 2, 1, 'flora'),
   n('flora.scatter', 'Scatter', 0, 1, 0.6, 'flora'),
   n('flora.trees', 'Trees', 1, 7, 1, 'flora', false),
+  n('flora.sprout', 'Sprouting', 0, 1, 0.25, 'flora'),
   n('flora.reach', 'Crown Reach', 0.6, 2.5, 1.3, 'flora'),
   // dieback: the tree is always shedding its oldest tips, so growth and decay
   // reach an equilibrium instead of the tree filling up and stopping
