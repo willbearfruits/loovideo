@@ -7,7 +7,14 @@ import { createNoise3D } from 'simplex-noise'
 import { PALETTES } from '../../../../shared/palettes'
 import type { AudioFrame } from '../../audio'
 import { Params, type SystemCtx, type VisualSystem } from '../types'
-import { buildAtlas, buildEdgeAtlas, zalgoMarks, GLYPH_FONT, type Atlas } from './glyphs'
+import {
+  buildAtlas,
+  buildEdgeAtlas,
+  zalgoMarks,
+  GLYPH_FONT,
+  ORGANISM_RANGES,
+  type Atlas
+} from './glyphs'
 
 interface Drop {
   col: number
@@ -36,6 +43,20 @@ export class CharactersSystem implements VisualSystem {
   private noise2 = createNoise3D()
   private flowT = 0
   private scopeHits = new Float32Array(0)
+
+  // physarum (ported from characterglitch/physarum_zalgo.html)
+  private phX = new Float32Array(0)
+  private phY = new Float32Array(0)
+  private phH = new Float32Array(0)
+  private pher = new Float32Array(0)
+  private pherBuf = new Float32Array(0)
+  private phCarry = 0
+  private phOnsetPrev = 0
+
+  // de Jong attractor (ported from characterglitch/dejong_organism.html)
+  private atGrid = new Float32Array(0)
+  private atT = 7.3
+  private atOnsetPrev = 0
 
   private cols = 0
   private rows = 0
@@ -107,7 +128,10 @@ export class CharactersSystem implements VisualSystem {
     if (!this.active) return
     const mode = p.str('chars.mode')
     this.ctx.webcam.ensure(mode === 'cam')
-    this.layout(p.num('chars.density'), p.str('chars.palette'), p.str('chars.charset'))
+    // the organism modes use their own tiered charset — that progression IS the piece
+    const charset =
+      mode === 'physarum' || mode === 'attractor' ? 'organism' : p.str('chars.charset')
+    this.layout(p.num('chars.density'), p.str('chars.palette'), charset)
     if (!this.atlas) return
 
     const g = this.c2d
@@ -129,10 +153,242 @@ export class CharactersSystem implements VisualSystem {
       case 'cam':
         this.drawCam(g, time, p, audio)
         break
+      case 'physarum':
+        this.drawPhysarum(g, dt, time, p, audio)
+        break
+      case 'attractor':
+        this.drawAttractor(g, dt, time, p, audio)
+        break
       default:
         this.drawFlow(g, dt, time, p, audio)
     }
     this.texture.needsUpdate = true
+  }
+
+  /** density 0..1 → glyph index inside the organism tier ramp (seeded pick). */
+  private tierGlyph(v: number, seed: number): number {
+    const t = v < 0.1 ? 0 : v < 0.32 ? 1 : v < 0.56 ? 2 : v < 0.8 ? 3 : 4
+    const [lo, hi] = ORGANISM_RANGES[t]
+    return lo + (hashInt(seed) % (hi - lo))
+  }
+
+  // ---- mode: physarum ------------------------------------------------------
+  // Ported from characterglitch/physarum_zalgo.html: agents sense the
+  // pheromone field left/center/right, turn toward the strongest trail,
+  // deposit as they move; the field diffuses and decays. Audio drives it:
+  // level is metabolic rate, bass feeds the deposit, onsets scramble headings,
+  // and silence starves the network back to dust.
+
+  private drawPhysarum(
+    g: CanvasRenderingContext2D,
+    dt: number,
+    time: number,
+    p: Params,
+    audio: AudioFrame
+  ): void {
+    const a = this.atlas!
+    const { cols, rows, cell } = this
+    const size = cols * rows
+    const N = Math.max(1200, Math.min(7000, Math.round(size * 0.3)))
+
+    if (this.pher.length !== size || this.phX.length !== N) {
+      this.pher = new Float32Array(size)
+      this.pherBuf = new Float32Array(size)
+      this.phX = new Float32Array(N)
+      this.phY = new Float32Array(N)
+      this.phH = new Float32Array(N)
+      // uniform spawn: the network condenses out of scattered dust and fills
+      // the whole frame (the original's ring spawn collapses into a honeypot
+      // at concert grid sizes)
+      for (let i = 0; i < N; i++) {
+        this.phX[i] = Math.random() * cols
+        this.phY[i] = Math.random() * rows
+        this.phH[i] = Math.random() * Math.PI * 2
+      }
+    }
+
+    const bass = (audio.bands[0] + audio.bands[1]) / 2
+    const metab = audio.active ? 0.35 + audio.level * 1.4 : 1
+    const SENSE_DIST = 4 + p.num('chars.warp') * 5
+    const SENSE_ANGLE = 0.6
+    const TURN = 0.45
+    const DEPOSIT = 0.8 * (0.55 + bass * 0.9) * (1 - audio.silence * 0.85)
+    const DECAY = 0.965
+    const DIFFUSE = 0.12
+
+    // onset: a fraction of the swarm loses its way (heading scramble)
+    if (audio.onset > 0.85 && this.phOnsetPrev <= 0.85) {
+      const frac = p.num('chars.sparkle') * 0.5
+      for (let i = 0; i < N; i++) {
+        if ((hashInt(i * 977 ^ (time * 1000) | 0) & 255) / 256 < frac) {
+          this.phH[i] += (Math.random() - 0.5) * 3.2
+        }
+      }
+    }
+    this.phOnsetPrev = audio.onset
+
+    const sense = (x: number, y: number, heading: number, offset: number): number => {
+      const sx = Math.floor(x + Math.cos(heading + offset) * SENSE_DIST)
+      const sy = Math.floor(y + Math.sin(heading + offset) * SENSE_DIST)
+      if (sx < 0 || sx >= cols || sy < 0 || sy >= rows) return 0
+      return this.pher[sy * cols + sx]
+    }
+
+    // fixed-timestep agent steps, rate driven by the music
+    this.phCarry += dt * 60 * metab * Math.max(0.05, p.num('chars.flow')) * (1 - audio.silence * 0.92)
+    let steps = Math.min(3, Math.floor(this.phCarry))
+    this.phCarry -= steps
+    while (steps-- > 0) {
+      for (let i = 0; i < N; i++) {
+        const sL = sense(this.phX[i], this.phY[i], this.phH[i], -SENSE_ANGLE)
+        const sC = sense(this.phX[i], this.phY[i], this.phH[i], 0)
+        const sR = sense(this.phX[i], this.phY[i], this.phH[i], SENSE_ANGLE)
+        if (sC > 9) this.phH[i] += (Math.random() - 0.5) * 2.4 // overcrowded — leave
+        else if (sC >= sL && sC >= sR) this.phH[i] += (Math.random() - 0.5) * 0.1
+        else if (sL > sR) this.phH[i] -= TURN + Math.random() * 0.1
+        else if (sR > sL) this.phH[i] += TURN + Math.random() * 0.1
+        else this.phH[i] += (Math.random() - 0.5) * TURN * 2
+
+        this.phX[i] += Math.cos(this.phH[i])
+        this.phY[i] += Math.sin(this.phH[i])
+        if (this.phX[i] < 0) this.phX[i] += cols
+        if (this.phX[i] >= cols) this.phX[i] -= cols
+        if (this.phY[i] < 0) this.phY[i] += rows
+        if (this.phY[i] >= rows) this.phY[i] -= rows
+        const gc = Math.floor(this.phX[i])
+        const gr = Math.floor(this.phY[i])
+        const di = gr * cols + gc
+        this.pher[di] = Math.min(12, this.pher[di] + DEPOSIT)
+      }
+    }
+
+    // diffuse + decay (3×3, as the original)
+    const pher = this.pher
+    const buf = this.pherBuf
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c
+        let sum = pher[idx] * (1 - DIFFUSE)
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue
+            const nr = r + dy
+            const nc = c + dx
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols)
+              sum += pher[nr * cols + nc] * (DIFFUSE / 8)
+          }
+        }
+        buf[idx] = sum * DECAY
+      }
+    }
+    this.pher = buf
+    this.pherBuf = pher
+
+    // render through the organism tiers
+    const stops = PALETTES[p.str('chars.palette')] ?? PALETTES.phosphor
+    const contrastExp = Math.pow(2.2, 1 - p.num('chars.contrast'))
+    const zalgo = p.num('chars.zalgo')
+    let zalgoBudget = Math.floor(zalgo * MAX_ZALGO_PER_FRAME * 0.5)
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c
+        let v = Math.min(1, this.pher[idx] / 6)
+        if (v < 0.03) continue
+        v = Math.pow(v, contrastExp)
+        const glyph = this.tierGlyph(v, idx * 31 + ((v * 8) | 0))
+        const row = Math.min(a.stopCount - 1, Math.floor(v * a.stopCount))
+        g.globalAlpha = 0.3 + 0.7 * v
+        g.drawImage(a.canvas, glyph * cell, row * cell, cell, cell, c * cell, r * cell, cell, cell)
+        if (v > 0.8 && zalgoBudget > 0 && Math.random() < zalgo * 0.25) {
+          zalgoBudget--
+          g.globalAlpha = 0.85
+          g.fillStyle = stops[stops.length - 1]
+          g.fillText(zalgoMarks(zalgo, Math.random), c * cell + cell / 2, r * cell + cell * 0.56)
+        }
+      }
+    }
+    g.globalAlpha = 1
+  }
+
+  // ---- mode: attractor -----------------------------------------------------
+  // Ported from characterglitch/dejong_organism.html: the de Jong map
+  //   x' = sin(a·y) − cos(b·x) · y' = sin(c·x) − cos(d·y)
+  // accumulated into a decaying density grid. The figure morphs while sound
+  // plays (bass and mids bend a and b), every onset jumps to a new figure —
+  // one event, one figure — and silence freezes the map so the cloud
+  // dissolves back to dust.
+
+  private drawAttractor(
+    g: CanvasRenderingContext2D,
+    dt: number,
+    _time: number,
+    p: Params,
+    audio: AudioFrame
+  ): void {
+    const a = this.atlas!
+    const { cols, rows, cell } = this
+    const size = cols * rows
+    if (this.atGrid.length !== size) this.atGrid = new Float32Array(size)
+
+    const bass = (audio.bands[0] + audio.bands[1]) / 2
+    const mid = (audio.bands[3] + audio.bands[4]) / 2
+    const warp = p.num('chars.warp')
+
+    // morph clock: runs with the music, freezes in silence
+    const morph = audio.active ? 0.06 + audio.level * 0.45 : 0.2
+    this.atT += dt * morph * Math.max(0.05, p.num('chars.flow'))
+    if (audio.onset > 0.85 && this.atOnsetPrev <= 0.85) this.atT += 2 + Math.random() * 6
+    this.atOnsetPrev = audio.onset
+
+    const t = this.atT
+    const pa = 2.6 * Math.sin(t * 0.9) + 0.8 * Math.cos(t * 0.31) + bass * 1.2 * warp
+    const pb = 2.4 * Math.cos(t * 0.73) + 0.6 * Math.sin(t * 0.21) + mid * 1.0 * warp
+    const pc = Math.sin(t * 1.7) * 2.5 + Math.cos(t * 0.3) * 0.5
+    const pd = Math.cos(t * 1.1) * 2.5 + Math.sin(t * 0.7) * 0.5
+
+    const decay = Math.pow(0.965, dt * 60)
+    const grid = this.atGrid
+    for (let i = 0; i < size; i++) grid[i] *= decay
+
+    // silence starves the figure — fewer points feed the cloud
+    const feed = (audio.active ? 0.35 + audio.level * 0.9 : 1) * (1 - audio.silence * 0.92)
+    const iters = Math.round(size * 1.15 * feed)
+    let x = Math.sin(t * 3) * 0.1
+    let y = Math.cos(t * 2) * 0.1
+    for (let i = 0; i < 50; i++) {
+      const nx = Math.sin(pa * y) - Math.cos(pb * x)
+      y = Math.sin(pc * x) - Math.cos(pd * y)
+      x = nx
+    }
+    for (let i = 0; i < iters; i++) {
+      const nx = Math.sin(pa * y) - Math.cos(pb * x)
+      y = Math.sin(pc * x) - Math.cos(pd * y)
+      x = nx
+      if (x < -2.2 || x > 2.2 || y < -2.2 || y > 2.2) continue
+      const gc = ((x + 2.2) / 4.4) * cols | 0
+      const gr = ((y + 2.2) / 4.4) * rows | 0
+      if (gc < 0 || gc >= cols || gr < 0 || gr >= rows) continue
+      grid[gr * cols + gc] += 0.15
+    }
+
+    const contrastExp = Math.pow(2.2, 1 - p.num('chars.contrast'))
+    const sym = p.str('chars.symmetry')
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        let sc = c
+        let sr = r
+        if (sym === 'mirror' || sym === 'quad') sc = Math.min(c, cols - 1 - c)
+        if (sym === 'quad') sr = Math.min(r, rows - 1 - r)
+        let v = Math.min(1, grid[sr * cols + sc] / 8)
+        if (v < 0.03) continue
+        v = Math.pow(v, contrastExp)
+        const glyph = this.tierGlyph(v, (sr * cols + sc) * 17 + ((v * 8) | 0))
+        const row = Math.min(a.stopCount - 1, Math.floor(v * a.stopCount))
+        g.globalAlpha = 0.3 + 0.7 * v
+        g.drawImage(a.canvas, glyph * cell, row * cell, cell, cell, c * cell, r * cell, cell, cell)
+      }
+    }
+    g.globalAlpha = 1
   }
 
   // ---- mode: scope ---------------------------------------------------------

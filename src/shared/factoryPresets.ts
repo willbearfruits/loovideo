@@ -88,6 +88,41 @@ export const FACTORY_PRESETS: Record<string, PresetPatch> = {
     ]
   },
 
+  // characterglitch/physarum_zalgo, audio-driven: the slime mold's metabolism
+  // is the music. Bass feeds the trails, onsets scatter the swarm, silence
+  // starves the network back to dust. Ink on paper.
+  MYCELIUM: {
+    system: 'chars',
+    values: {
+      'chars.mode': 'physarum',
+      'chars.palette': 'ink',
+      'chars.density': 0.6,
+      'chars.warp': 0.7,
+      'chars.zalgo': 0.25,
+      'chars.sparkle': 0.6,
+      'fx.grain': 0.1,
+      'fx.vignette': 0.22
+    },
+    routes: [{ id: 'r1', source: 'band0', target: 'chars.warp', depth: 0.35 }]
+  },
+
+  // characterglitch/dejong_organism: bass and mids bend the map, every onset
+  // is a hard jump to a new figure, silence lets the cloud dissolve.
+  'DE JONG': {
+    system: 'chars',
+    values: {
+      'chars.mode': 'attractor',
+      'chars.palette': 'vapor',
+      'chars.density': 0.65,
+      'chars.warp': 0.8,
+      'chars.contrast': 1.1,
+      'fx.bloom': 0.45,
+      'fx.trails': 0.2,
+      'fx.grain': 0.1
+    },
+    routes: [{ id: 'r1', source: 'onset', target: 'fx.flash', depth: 0.15 }]
+  },
+
   // The room itself, transcoded: edge-aware webcam ascii.
   'CAM ASCII': {
     system: 'chars',

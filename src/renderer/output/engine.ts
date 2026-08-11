@@ -17,6 +17,7 @@ import type { OutputNet } from './net'
 import { AudioEngine } from './audio'
 import { Webcam } from './webcam'
 import { GradeShader } from './fx'
+import { SceneFade } from './fade'
 import { Params, type VisualSystem } from './systems/types'
 import { CharactersSystem } from './systems/characters'
 import { ParticlesSystem } from './systems/particles'
@@ -60,9 +61,13 @@ export class Engine {
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       powerPreference: 'high-performance',
-      stencil: false
+      stencil: false,
+      // scene crossfade snapshots the canvas outside the render tick
+      preserveDrawingBuffer: true
     })
     document.body.appendChild(this.renderer.domElement)
+    const fade = new SceneFade(this.renderer.domElement)
+    this.net.onSceneChange = (duration) => fade.freeze(duration)
 
     const size = new THREE.Vector2(window.innerWidth, window.innerHeight)
     this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera())

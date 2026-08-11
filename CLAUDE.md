@@ -87,10 +87,19 @@ JODI, Vuk Ćosić), and the murmuration literature (STARFLAG/StarDisplay):
 
 ## Current status / roadmap
 
-Working: chars (flow, zalgo rain, waveform bars, Lissajous phase scope,
-edge-aware webcam ascii), particles (curl nebula, shell), flora (murmuration
-with landing narrative, space-colonization tree, night sky), 11 factory
-presets, quality tiers, presets/setlist, CLI.
+Working: chars (flow, physarum swarm, de Jong attractor, zalgo rain, waveform
+bars, Lissajous phase scope, edge-aware webcam ascii), particles (curl nebula,
+shell), flora (murmuration with landing narrative, space-colonization tree,
+night sky), 13 factory presets as a setlist, scene crossfade (freeze-frame
+dissolve on preset/system change), quality tiers, CLI.
+
+**Provenance**: `physarum`/`attractor` modes + the `organism` charset tiers are
+ports from the owner's own character-art practice — source pieces live in
+`~/Projects/characterglitch/` (physarum_zalgo.html, dejong_organism.html; live
+at willbearfruits.github.io/characterglitch) and the wider practice in
+`~/Projects/characterworld/`, `zalgo_ascii_studio`, `text-glitch-tool` (on the
+Linux box). When extending character modes, mine those first — keep the tier
+progression dust→braille→thread→weave→organic intact.
 
 Next (agreed): images system (early-Flash cutout animation); netart modes —
 "View Source" (hidden glyph schematic that resolves in silence), "Typist"

@@ -2,11 +2,35 @@
 // an atlas with drawImage is ~10× faster than per-cell fillText, which is what
 // lets a 200×110 grid run at 60 fps on an iGPU.
 
+// The organism tiers are ported from the owner's characterglitch pieces
+// (physarum_zalgo.html, dejong_organism.html) — dust → braille densification
+// → thread → weave → organic nodes. That progression is the practice's
+// signature; keep the tier ORDER and boundaries stable.
+export const ORGANISM_TIERS: string[][] = [
+  ['·', '‧', '∙', '•', '․'], // dust
+  ['⠁', '⠃', '⠇', '⠏', '⠟', '⠿', '⡿', '⣿'], // braille fill-in
+  ['─', '│', '╱', '╲', '╳', '╎', '╏', '╭', '╮', '╯', '╰'], // thread
+  ['░', '▒', '▓', '■', '◆', '█'], // weave
+  ['๏', '۞', '❀', '✻', '✵', '❉', '❋', '✦', '✳', '✹'] // organic nodes
+]
+export const ORGANISM_RAMP = ORGANISM_TIERS.flat()
+/** [start, end) index of each tier inside ORGANISM_RAMP */
+export const ORGANISM_RANGES: [number, number][] = (() => {
+  const out: [number, number][] = []
+  let o = 0
+  for (const t of ORGANISM_TIERS) {
+    out.push([o, o + t.length])
+    o += t.length
+  }
+  return out
+})()
+
 export const RAMPS: Record<string, string[]> = {
   ascii: [' ', '.', ':', '-', '=', '+', '*', 'l', 't', 'x', 'z', 'v', 'X', 'O', '0', '#', '%', '@'],
   braille: ['⠀', '⠂', '⠒', '⠓', '⠛', '⠟', '⠿', '⡿', '⣿'],
   blocks: [' ', '░', '▖', '▒', '▞', '▓', '▛', '█'],
-  glitch: [' ', '·', '∴', '∷', '≠', '≡', '⌁', '▒', '▚', '▓', '█']
+  glitch: [' ', '·', '∴', '∷', '≠', '≡', '⌁', '▒', '▚', '▓', '█'],
+  organism: ORGANISM_RAMP
 }
 
 /** Directional glyphs for edge-aware rendering: 0°, 45°, 90°, 135°. */

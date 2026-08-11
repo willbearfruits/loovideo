@@ -14,6 +14,10 @@ export class OutputNet {
   connected = false
   /** bumped whenever a full state (preset load / reconnect) replaces the mirror */
   stateEpoch = 0
+  /** called just before a scene change lands (preset load / system switch),
+   * with the fade duration to use — the engine freezes the outgoing frame */
+  onSceneChange: ((duration: number) => void) | null = null
+  private gotFirstState = false
   private ws: WebSocket | null = null
   private url: string
 
@@ -47,10 +51,16 @@ export class OutputNet {
   private handle(msg: ServerMessage): void {
     const s = this.state
     switch (msg.t) {
-      case 'state':
+      case 'state': {
+        if (this.gotFirstState) {
+          const dur = Number(msg.state.values['master.fade'])
+          this.onSceneChange?.(Number.isFinite(dur) ? dur : 0)
+        }
+        this.gotFirstState = true
         this.state = msg.state
         this.stateEpoch++
         break
+      }
       case 'set':
         s.values[msg.id] = msg.value
         break
@@ -61,6 +71,10 @@ export class OutputNet {
         s.lfos[msg.index] = msg.def
         break
       case 'system':
+        if (msg.id !== s.system) {
+          const dur = Number(s.values['master.fade'])
+          this.onSceneChange?.(Number.isFinite(dur) ? dur : 0)
+        }
         s.system = msg.id
         break
       case 'device':

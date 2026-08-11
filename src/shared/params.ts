@@ -65,6 +65,7 @@ export const PARAMS: ParamDef[] = [
   // ---- master ----
   n('master.brightness', 'Brightness', 0, 1, 1, 'master'),
   n('master.speed', 'Speed', 0, 3, 1, 'master'),
+  n('master.fade', 'Scene Fade (s)', 0, 8, 1.6, 'master', false),
   b('master.blackout', 'Blackout', false, 'master'),
   b('master.hud', 'HUD', false, 'master'),
 
@@ -88,8 +89,8 @@ export const PARAMS: ParamDef[] = [
   ...Array.from({ length: 8 }, (_, i) => n(`audio.eq${i}`, `Band ${i + 1}`, 0, 2, 1, 'eq', false)),
 
   // ---- system: characters ----
-  e('chars.mode', 'Mode', ['flow', 'rain', 'wave', 'scope', 'cam'], 'flow', 'chars'),
-  e('chars.charset', 'Charset', ['ascii', 'braille', 'blocks', 'glitch'], 'ascii', 'chars'),
+  e('chars.mode', 'Mode', ['flow', 'physarum', 'attractor', 'rain', 'wave', 'scope', 'cam'], 'flow', 'chars'),
+  e('chars.charset', 'Charset', ['ascii', 'braille', 'blocks', 'glitch', 'organism'], 'ascii', 'chars'),
   e('chars.palette', 'Palette', PALETTE_NAMES, 'phosphor', 'chars'),
   e('chars.symmetry', 'Symmetry', ['off', 'mirror', 'quad'], 'off', 'chars'),
   n('chars.density', 'Density', 0, 1, 0.55, 'chars', false),

@@ -20,7 +20,7 @@ just WebSocket clients of the same hub (`ws://127.0.0.1:7770`).
 
 | id      | name       | status | what                                                       |
 | ------- | ---------- | ------ | ---------------------------------------------------------- |
-| `chars` | CHARACTERS | ✅     | glyph grid: noise flow, zalgo rain, waveform bars, Lissajous phase scope, edge-aware webcam-ascii |
+| `chars` | CHARACTERS | ✅     | glyph grid: noise flow, physarum swarm, de Jong attractor, zalgo rain, waveform bars, Lissajous phase scope, edge-aware webcam-ascii |
 | `parts` | PARTICLES  | ✅     | stateless GPU curl-noise field + breathing shell, 60k–600k points |
 | `flora` | FLORA      | ✅     | murmuration (silence lands the birds), space-colonization tree growth, night sky |
 | images  | IMAGES     | 🔜     | early-Flash-style cutout animation                         |
@@ -45,10 +45,20 @@ the murmuration literature (STARFLAG / StarDisplay):
   raw waveform as glyph bars. If an oscilloscope would disagree, it's wrong.
 - **noto / ink palettes.** Black-white-red discipline, or ink on paper (light
   backgrounds handled across all systems; bloom auto-disabled on paper).
+- **characterglitch lineage.** The `physarum` and `attractor` modes and the
+  `organism` charset (dust → braille → thread → weave → organic nodes) are
+  ported from the author's character-only browser pieces
+  ([characterglitch](https://willbearfruits.github.io/characterglitch/)),
+  rewired so the music is the metabolism: level drives the swarm, bass feeds
+  the trails, onsets jump to new figures, silence starves the organism.
+- **Scene fade.** Any preset load or system switch freeze-frames the outgoing
+  scene and dissolves it over the incoming one — `Scene Fade` in MIX, 0 for
+  hard cuts, up to 8s.
 - **Setlist**: factory presets are ordered as a concert arc — walk them live
   with ←/→ in the output window or `ctl next` / `ctl prev`:
-  PHASE SCOPE → WAVEFORM → RAIN TERMINAL → PHOSPHOR STORM → CAM ASCII →
-  MURMURATION → GROWTH → NIGHT → NEBULA DRIFT → SHELL PULSE.
+  PHASE SCOPE → WAVEFORM → RAIN TERMINAL → PHOSPHOR STORM → MYCELIUM →
+  DE JONG → CAM ASCII → MURMURATION → GROWTH → NIGHT → NEBULA DRIFT →
+  SHELL PULSE.
 
 ## Dev
 
