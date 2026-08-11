@@ -976,7 +976,18 @@ export class Tree {
         const s = base * age
         const tw = 0.45 + 0.55 * Math.abs(Math.sin(i * 1.93 + d.treble * 9))
         g.globalAlpha = (0.3 + 0.5 * tw) * (1 - d.silence * 0.45) * age * alpha
-        g.fillRect(this.swayX[i] - s / 2, this.swayY[i] - s / 2, s, s)
+        // a cluster, not a single pixel: one square reads as noise at any
+        // distance, three offset ones read as foliage
+        const px = this.swayX[i]
+        const py = this.swayY[i]
+        g.fillRect(px - s / 2, py - s / 2, s, s)
+        if (s > 1.2) {
+          const o = s * 0.85
+          const a1 = i * 2.399
+          g.fillRect(px + Math.cos(a1) * o - s * 0.35, py + Math.sin(a1) * o - s * 0.35, s * 0.7, s * 0.7)
+          const a2 = a1 + 2.1
+          g.fillRect(px + Math.cos(a2) * o - s * 0.3, py + Math.sin(a2) * o - s * 0.3, s * 0.6, s * 0.6)
+        }
       }
     }
 

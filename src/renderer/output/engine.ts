@@ -29,6 +29,7 @@ export class Engine {
   private renderer: THREE.WebGLRenderer
   private composer: EffectComposer
   private layersPass: LayersPass
+  private fade: SceneFade
   private afterimage: AfterimagePass
   private bloom: UnrealBloomPass
   private rgbShift: ShaderPass
@@ -68,8 +69,8 @@ export class Engine {
       preserveDrawingBuffer: true
     })
     document.body.appendChild(this.renderer.domElement)
-    const fade = new SceneFade(this.renderer.domElement)
-    this.net.onSceneChange = (duration) => fade.freeze(duration)
+    this.fade = new SceneFade(this.renderer.domElement)
+    this.net.onSceneChange = (duration) => this.fade.freeze(duration)
 
     const size = new THREE.Vector2(window.innerWidth, window.innerHeight)
     this.layersPass = new LayersPass()
@@ -290,6 +291,7 @@ export class Engine {
     gu.uInvert.value = p.bool('fx.invert') ? 1 : 0
     gu.uTime.value = this.scaledTime
 
+    this.fade.update(renderDt)
     this.composer.render()
 
     // HUD + telemetry

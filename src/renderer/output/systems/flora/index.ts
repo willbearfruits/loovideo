@@ -15,7 +15,7 @@ import { Params, applyBlend, type SystemCtx, type VisualSystem, type LayerBlend 
 import { Flock, flockCountScale, type FlockDrive, type FlockKind } from './flock'
 import { Tree, type TreeDrive, type TreeKind } from './tree'
 import { Stars } from './stars'
-import { Scenery, type SceneKind, type SceneryDrive } from './scenery'
+import { Scenery, dayCycle, type SceneKind, type SceneryDrive } from './scenery'
 import { Fauna, type FaunaDrive } from './fauna'
 
 const MAX_TREES = 7
@@ -48,7 +48,7 @@ export class FloraSystem implements VisualSystem {
     density: number
     horizonY: number
     share: number
-    kind: TreeKind
+    kind: TreeKind | 'mixed'
   } | null = null
   private viewW = 1920
   private viewH = 1080
@@ -144,6 +144,12 @@ export class FloraSystem implements VisualSystem {
       g.fillRect(0, 0, w, h)
     }
 
+    // Night has to reach the whole frame, not just the sky, or day and night
+    // are indistinguishable from each other and from the seasons. This is the
+    // ground darkening: a wash of stop 0 laid over everything after drawing,
+    // strongest at midnight. Applied at the end of update().
+    const day = dayCycle(drive.daytime)
+
     // --- back to front: sky, hills, ground, built structures ---------------
     if (wantStars) {
       this.stars.update(dt, time, w, h, density, stops, drive)
@@ -173,7 +179,7 @@ export class FloraSystem implements VisualSystem {
     // --- the grove ----------------------------------------------------------
     if (wantTree) {
       const nTrees = Math.max(1, Math.min(MAX_TREES, Math.round(p.num('flora.trees'))))
-      const kind = (p.str('flora.treeKind') || 'oak') as TreeKind
+      const kind = (p.str('flora.treeKind') || 'mixed') as TreeKind | 'mixed'
       const key = `${w}x${h}|${density.toFixed(2)}|${horizonY.toFixed(0)}|${nTrees}|${q.treeNodeCap}|${kind}`
       if (key !== this.lastTreeKey) {
         this.lastTreeKey = key
@@ -276,6 +282,16 @@ export class FloraSystem implements VisualSystem {
       this.flock.draw(g, w, h, stops, drive)
     }
 
+    // night wash over the finished frame — the single strongest cue that the
+    // day has turned, and it costs one rect
+    if (day.light < 0.98) {
+      g.setTransform(1, 0, 0, 1, 0, 0)
+      g.globalAlpha = (1 - day.light) * 0.62
+      g.fillStyle = stops[0]
+      g.fillRect(0, 0, w, h)
+      g.globalAlpha = 1
+    }
+
     this.lastMode = mode
     this.texture.needsUpdate = true
   }
@@ -290,6 +306,11 @@ export class FloraSystem implements VisualSystem {
     // hard against an edge
     const jitter = (Math.random() - 0.5) * Math.min(0.14, 0.7 / nTrees)
     const scale = nTrees === 1 ? 1 : 0.62 + ((i * 37) % 11) / 22
-    t.reset(s.w, s.h, s.density, s.horizonY, s.w * (f + jitter), scale, s.share, s.kind)
+    // 'mixed' gives each slot its own species, so a stand reads as woodland
+    // rather than an orchard of one clone repeated
+    const species: TreeKind[] = ['oak', 'pine', 'willow', 'birch']
+    const kind: TreeKind =
+      s.kind === 'mixed' ? species[(i * 3 + (Math.random() * 4) | 0) % species.length] : s.kind
+    t.reset(s.w, s.h, s.density, s.horizonY, s.w * (f + jitter), scale, s.share, kind)
   }
 }
