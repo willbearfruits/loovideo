@@ -162,6 +162,24 @@ function createWindows(): void {
   })
   loadPage(controlWin, 'control')
 
+  // Keep the control window off whichever display the output is using. Without
+  // this it opens wherever Windows last felt like, which on a docked Ally means
+  // it lands half on the projector — the one screen the audience can see.
+  {
+    const displays = screen.getAllDisplays()
+    const outIdx =
+      args.display !== undefined ? Math.min(args.display, displays.length - 1) : -1
+    const target =
+      displays.find((_, i) => i !== outIdx && displays.length > 1) ?? screen.getPrimaryDisplay()
+    const wa = target.workArea
+    controlWin.setBounds({
+      x: wa.x,
+      y: wa.y,
+      width: Math.min(1180, wa.width),
+      height: Math.min(760, wa.height)
+    })
+  }
+
   outputWin.on('closed', () => {
     outputWin = null
     app.quit()

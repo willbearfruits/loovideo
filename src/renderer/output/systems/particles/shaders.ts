@@ -71,22 +71,29 @@ vec3 curlNoise(vec3 p) {
 
 export const particleVertex = /* glsl */ `
 attribute float aRand;
+attribute vec3 aLat;        // lattice coordinate, -1..1 per axis
+attribute vec2 aStr;        // x = strand id 0..1 · y = arc position 0..1
 uniform float uTime;
-uniform float uMode;        // 0 nebula · 1 shell
+uniform float uMode;        // 0 nebula · 1 shell · 2 galaxy · 3 lattice · 4 strands · 5 torus
 uniform float uTurb;
 uniform float uScale;
 uniform float uDrift;
 uniform float uSpread;
 uniform float uSize;
 uniform float uHue;
+uniform float uTwist;
+uniform float uDepth;
 uniform float uBass;
 uniform float uMid;
 uniform float uTreble;
 uniform float uPxScale;
 varying float vT;
 varying float vSpark;
+varying float vFog;
 
 ${SNOISE}
+
+const float TAU = 6.28318530718;
 
 void main() {
   vec3 seed = position;
@@ -100,23 +107,72 @@ void main() {
     vec3 flow = curlNoise(flowP);
     p = base + flow * (uTurb * (0.55 + uBass * 0.9));
     p *= 1.0 + uMid * 0.18;
-  } else {
+  } else if (uMode < 1.5) {
     // shell: breathing sphere, surface rippled by noise + bass
     vec3 dir = normalize(seed + vec3(1e-4));
     float ripple = snoise(dir * (2.2 * uScale) + vec3(t * 0.35 * (0.2 + uDrift))) * 0.32 * uTurb;
     float r = uSpread * (1.15 + uBass * 0.5) + ripple;
     p = dir * r;
+  } else if (uMode < 2.5) {
+    // galaxy: log-spiral disc with differential rotation — the inner arms
+    // wind faster than the rim, so the figure shears instead of spinning rigid
+    float rr = sqrt(fract(aRand * 1.618 + 0.13));         // area-uniform radius
+    float r = rr * uSpread * 1.6;
+    float arm = floor(fract(aRand * 5.77) * 3.0);          // three arms
+    float theta = arm * (TAU / 3.0)
+                + log(r + 0.12) * (2.6 * uScale)
+                + t * (0.5 * uDrift) / (0.35 + r)
+                + (fract(aRand * 91.7) - 0.5) * (0.55 + uTurb * 0.6);
+    float thick = (fract(aRand * 33.3) - 0.5) * (0.14 + uTurb * 0.12) * (1.0 - rr * 0.55);
+    p = vec3(cos(theta) * r, thick * uSpread + uBass * 0.12 * sin(theta * 3.0), sin(theta) * r);
+    p += curlNoise(p * (0.9 * uScale) + t * 0.05) * uTurb * 0.18;
+  } else if (uMode < 3.5) {
+    // lattice: a rigid grid the audio breathes through — Ikeda's data-cube
+    vec3 cellP = aLat * uSpread * 1.25;
+    float wave = sin(dot(aLat, vec3(2.1, 1.7, 2.6)) * 2.4 - t * (1.2 + uDrift));
+    vec3 push = curlNoise(cellP * (0.7 * uScale) + t * 0.08 * uDrift);
+    p = cellP + push * uTurb * 0.35 * (0.35 + uBass * 1.4) + normalize(cellP + 1e-4) * wave * uMid * 0.22;
+  } else if (uMode < 4.5) {
+    // strands: filaments combed by one curl sample — cheap enough for 600k
+    // points, and the arc parameter keeps each filament coherent
+    float sid = aStr.x;
+    float arc = aStr.y;
+    float a0 = sid * TAU * 7.0;
+    vec3 root = vec3(cos(a0), (fract(sid * 17.3) - 0.5) * 1.6, sin(a0)) * uSpread * 0.9;
+    vec3 dir = curlNoise(root * (0.8 * uScale) + vec3(0.0, t * 0.08 * uDrift, 0.0));
+    float len = uSpread * (0.7 + fract(sid * 3.1) * 1.1);
+    p = root + dir * arc * len;
+    p += curlNoise(p * (1.6 * uScale) + t * 0.12 * uDrift) * uTurb * 0.22 * arc;
+    p.y += sin(arc * 3.0 + t * 1.4 + sid * 20.0) * uBass * 0.2 * arc;
+  } else {
+    // torus: a ring the treble ripples around the minor circumference
+    float u1 = fract(aRand * 1.913) * TAU;
+    float v1 = fract(aRand * 7.271) * TAU + t * 0.25 * uDrift;
+    float R = uSpread * 1.05;
+    float rMinor = uSpread * (0.34 + uBass * 0.16)
+                 + snoise(vec3(cos(u1), sin(u1), v1) * (1.8 * uScale) + t * 0.3) * 0.12 * uTurb;
+    p = vec3((R + rMinor * cos(v1)) * cos(u1), rMinor * sin(v1), (R + rMinor * cos(v1)) * sin(u1));
+  }
+
+  // twist about Y, proportional to height — shears any of the above
+  if (abs(uTwist) > 0.001) {
+    float a = uTwist * p.y;
+    float c = cos(a), s = sin(a);
+    p = vec3(p.x * c - p.z * s, p.y, p.x * s + p.z * c);
   }
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
+
+  float dist = -mv.z;
+  vFog = 1.0 - uDepth * clamp((dist - 1.4) / 3.6, 0.0, 1.0);
 
   float sparkGate = step(0.995 - uTreble * 0.03, fract(aRand * 7.31));
   vSpark = sparkGate * uTreble;
   vT = fract(aRand * 0.618 + uHue + snoise(seed * 0.6) * 0.15);
 
   float sz = uSize * mix(0.7, 2.2, fract(aRand * 3.7)) * (1.0 + sparkGate * uTreble * 2.0);
-  gl_PointSize = clamp(sz * uPxScale / max(0.4, -mv.z), 1.0, 42.0);
+  gl_PointSize = clamp(sz * uPxScale / max(0.4, dist), 1.0, 42.0);
 }
 `
 
@@ -128,8 +184,12 @@ uniform vec3 uPal2;
 uniform vec3 uPal3;
 uniform vec3 uPal4;
 uniform float uLevel;
+uniform float uSharp;
+uniform float uShape;   // 0 soft · 1 dot · 2 ring · 3 square · 4 cross
+uniform float uOpacity;
 varying float vT;
 varying float vSpark;
+varying float vFog;
 
 vec3 palette(float t) {
   t = clamp(t, 0.0, 1.0) * 4.0;
@@ -141,11 +201,36 @@ vec3 palette(float t) {
 }
 
 void main() {
-  float d = length(gl_PointCoord - 0.5);
-  if (d > 0.5) discard;
-  float a = smoothstep(0.5, 0.06, d);
+  vec2 q = gl_PointCoord - 0.5;
+  float d = length(q);
+  // uSharp collapses the falloff toward a hard edge; at 1.0 the sprite is a
+  // clean stamp rather than a blur, which is what reads as "sharp" on an LCD
+  float inner = mix(0.06, 0.46, uSharp);
+  float a;
+
+  if (uShape < 0.5) {
+    a = smoothstep(0.5, inner, d);
+  } else if (uShape < 1.5) {
+    a = 1.0 - smoothstep(mix(0.30, 0.44, uSharp), 0.5, d);
+  } else if (uShape < 2.5) {
+    float ring = abs(d - 0.34);
+    a = 1.0 - smoothstep(mix(0.05, 0.015, uSharp), mix(0.16, 0.06, uSharp), ring);
+  } else if (uShape < 3.5) {
+    vec2 e = abs(q);
+    float m = max(e.x, e.y);
+    a = 1.0 - smoothstep(mix(0.30, 0.44, uSharp), 0.47, m);
+  } else {
+    vec2 e = abs(q);
+    float bar = mix(0.09, 0.035, uSharp);
+    float arm = min(e.x, e.y);
+    a = (1.0 - smoothstep(bar, bar * 2.0, arm)) * (1.0 - smoothstep(0.42, 0.5, max(e.x, e.y)));
+  }
+
+  if (a <= 0.003) discard;
   vec3 c = palette(vT) * (0.55 + uLevel * 0.75);
   c += vSpark * vec3(0.9);
-  gl_FragColor = vec4(c * a, a * 0.85);
+  c *= vFog;
+  // additive blending ignores dst alpha, so the layer fade has to scale RGB too
+  gl_FragColor = vec4(c * a * uOpacity, a * 0.85 * vFog * uOpacity);
 }
 `

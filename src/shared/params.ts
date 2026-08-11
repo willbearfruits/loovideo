@@ -69,8 +69,18 @@ export const PARAMS: ParamDef[] = [
   b('master.blackout', 'Blackout', false, 'master'),
   b('master.hud', 'HUD', false, 'master'),
 
+  // ---- layers: every system can render at once ----
+  // The `system` selector still picks the BASE layer (opaque ground, and what
+  // the setlist/keys switch). These are the overlay opacities for the other
+  // two — modulatable, so audio can fade a whole system in and out.
+  n('mix.chars', 'Characters Layer', 0, 1, 0, 'mix'),
+  n('mix.parts', 'Particles Layer', 0, 1, 0, 'mix'),
+  n('mix.flora', 'Flora Layer', 0, 1, 0, 'mix'),
+  e('mix.blend', 'Layer Blend', ['add', 'screen', 'normal'], 'add', 'mix'),
+
   // ---- global FX chain ----
   n('fx.bloom', 'Bloom', 0, 1, 0.4, 'fx'),
+  n('fx.sharpen', 'Sharpen', 0, 1, 0, 'fx'),
   n('fx.trails', 'Trails', 0, 1, 0, 'fx'),
   n('fx.rgbshift', 'RGB Shift', 0, 1, 0, 'fx'),
   n('fx.pixelate', 'Pixelate', 0, 1, 0, 'fx'),
@@ -99,10 +109,21 @@ export const PARAMS: ParamDef[] = [
   n('chars.zalgo', 'Zalgo', 0, 1, 0.45, 'chars'),
   n('chars.sparkle', 'Sparkle', 0, 1, 0.3, 'chars'),
   n('chars.contrast', 'Contrast', 0, 2, 1, 'chars'),
+  // Stillness discipline says motion means sound, so with an interface
+  // connected and the room quiet the grid nearly stops. That is the contract,
+  // not a bug — but it makes the system look dead while you are setting up or
+  // playing very sparse material. This is the floor under that gating: 0 keeps
+  // the contract exactly, higher values buy ambient motion with no signal.
+  n('chars.idle', 'Idle Motion', 0, 1, 0.3, 'chars'),
+  // how hard the level/onset term drives the field. 1 is the original mapping;
+  // higher makes quiet material read as movement instead of near-stillness,
+  // which is what you want with sparse amplified objects.
+  n('chars.drive', 'Dynamics', 0, 5, 2.2, 'chars'),
   b('chars.invert', 'Invert', false, 'chars'),
 
   // ---- system: particles ----
-  e('parts.mode', 'Mode', ['nebula', 'shell'], 'nebula', 'parts'),
+  e('parts.mode', 'Mode', ['nebula', 'shell', 'galaxy', 'lattice', 'strands', 'torus'], 'nebula', 'parts'),
+  e('parts.shape', 'Point Shape', ['soft', 'dot', 'ring', 'square', 'cross'], 'soft', 'parts'),
   e('parts.palette', 'Palette', PALETTE_NAMES, 'ice', 'parts'),
   n('parts.density', 'Density', 0.05, 1, 0.7, 'parts', false),
   n('parts.turbulence', 'Turbulence', 0, 2, 0.8, 'parts'),
@@ -110,17 +131,49 @@ export const PARAMS: ParamDef[] = [
   n('parts.drift', 'Drift', 0, 2, 0.5, 'parts'),
   n('parts.spread', 'Spread', 0.2, 2, 1, 'parts'),
   n('parts.size', 'Point Size', 0.2, 4, 1, 'parts'),
+  n('parts.sharp', 'Edge Sharpness', 0, 1, 0.35, 'parts'),
+  n('parts.depth', 'Depth Fade', 0, 1, 0.3, 'parts'),
+  n('parts.twist', 'Twist', -2, 2, 0, 'parts'),
   n('parts.hue', 'Hue Cycle', 0, 1, 0, 'parts'),
   n('parts.orbit', 'Orbit', -2, 2, 0.3, 'parts'),
+  n('parts.tilt', 'Camera Tilt', -1, 1, 0.12, 'parts'),
+  n('parts.fov', 'Field of View', 25, 100, 58, 'parts'),
   n('parts.punch', 'Onset Punch', 0, 1, 0.5, 'parts', false),
 
   // ---- system: flora & fauna ----
+  // `mode` picks the principal inhabitant; the three add-* toggles stack the
+  // others on the same ground line, so a tree can grow inside a murmuration
+  // under a night sky.
   e('flora.mode', 'Mode', ['tree', 'flock', 'stars'], 'flock', 'flora'),
   e('flora.palette', 'Palette', PALETTE_NAMES, 'ink', 'flora'),
+  // a landscape to put the living things in
+  e('flora.scene', 'Landscape', ['bare', 'hills', 'farm'], 'bare', 'flora'),
+  e('flora.flockKind', 'Flock', ['starlings', 'geese', 'midges'], 'starlings', 'flora'),
+  e('flora.treeKind', 'Species', ['oak', 'pine', 'willow', 'birch'], 'oak', 'flora'),
+  // momentary: the renderer clears it as soon as it starts the fell sequence
+  b('flora.fell', 'FELL THE TREES', false, 'flora'),
+  b('flora.addStars', '+ Sky', false, 'flora'),
+  b('flora.addTree', '+ Trees', false, 'flora'),
+  b('flora.addFlock', '+ Birds', false, 'flora'),
+  b('flora.endless', 'Endless Growth', true, 'flora'),
+  // when a tree reaches the node ceiling it is replaced by a sapling in the
+  // same ground, so the scene never stops growing even though no single tree
+  // can grow without bound
+  b('flora.succession', 'Succession', true, 'flora'),
+  n('flora.animals', 'Livestock', 0, 14, 0, 'flora', false),
   n('flora.density', 'Density', 0.05, 1, 0.6, 'flora', false),
   n('flora.wind', 'Wind', 0, 2, 0.6, 'flora'),
   n('flora.vigor', 'Vigor', 0, 2, 1, 'flora'),
   n('flora.scatter', 'Scatter', 0, 1, 0.6, 'flora'),
+  n('flora.trees', 'Trees', 1, 7, 1, 'flora', false),
+  n('flora.reach', 'Crown Reach', 0.6, 2.5, 1.3, 'flora'),
+  // dieback: the tree is always shedding its oldest tips, so growth and decay
+  // reach an equilibrium instead of the tree filling up and stopping
+  n('flora.decay', 'Dieback', 0, 1, 0.12, 'flora'),
+  // foliage fills in behind the growing frontier — a tip's leaf swells with
+  // its age, so the canopy greens up over minutes rather than appearing whole
+  n('flora.leaves', 'Foliage', 0, 1, 0.6, 'flora'),
+  n('flora.fit', 'Auto Frame', 0, 1, 0.7, 'flora', false),
   n('flora.horizon', 'Horizon', 0.4, 0.95, 0.78, 'flora', false)
 ]
 
@@ -165,26 +218,42 @@ export interface LfoDef {
 // Quality
 
 export type QualityPreset = 'low' | 'medium' | 'high' | 'ultra'
+export type MsaaLevel = 0 | 2 | 4
+export const MSAA_LEVELS: MsaaLevel[] = [0, 2, 4]
+
 export interface QualityState {
   preset: QualityPreset
   /** render resolution multiplier 0.5..2 */
   renderScale: number
   /** 0 = uncapped */
   fpsCap: 0 | 30 | 60 | 120
+  /**
+   * MSAA on the composite target. The strongest sharpness lever for the 3D
+   * system — point and line edges get resolved before bloom smears them — but
+   * it multiplies fragment cost, so it is an explicit rig choice rather than
+   * something a quality tier turns on behind your back. Judge it on the Ally.
+   */
+  msaa: MsaaLevel
 }
 
 export interface QualityTier {
   particleBase: number
   /** hard ceiling on character grid columns */
   maxGridCols: number
+  /** birds at flora.density = 1 (CPU-bound: boids run on the main thread) */
+  flockBase: number
+  /** node ceiling for the endlessly-growing tree, shared across all trunks */
+  treeNodeCap: number
   fxFull: boolean
 }
 
 export const QUALITY_TIERS: Record<QualityPreset, QualityTier> = {
-  low: { particleBase: 60_000, maxGridCols: 110, fxFull: false },
-  medium: { particleBase: 150_000, maxGridCols: 160, fxFull: true },
-  high: { particleBase: 300_000, maxGridCols: 220, fxFull: true },
-  ultra: { particleBase: 600_000, maxGridCols: 300, fxFull: true }
+  // treeNodeCap is bounded by Canvas2D stroke throughput, not memory: every
+  // node is a line segment re-stroked each frame because the wind moves it.
+  low: { particleBase: 60_000, maxGridCols: 110, flockBase: 3_000, treeNodeCap: 6_000, fxFull: false },
+  medium: { particleBase: 150_000, maxGridCols: 160, flockBase: 9_000, treeNodeCap: 14_000, fxFull: true },
+  high: { particleBase: 300_000, maxGridCols: 220, flockBase: 20_000, treeNodeCap: 28_000, fxFull: true },
+  ultra: { particleBase: 600_000, maxGridCols: 300, flockBase: 45_000, treeNodeCap: 60_000, fxFull: true }
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +289,7 @@ export function defaultState(): ParamState {
     system: 'chars',
     audioDeviceId: null,
     videoDeviceId: null,
-    quality: { preset: 'high', renderScale: 1, fpsCap: 0 }
+    quality: { preset: 'high', renderScale: 1, fpsCap: 0, msaa: 0 }
   }
 }
 

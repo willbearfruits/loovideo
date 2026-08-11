@@ -21,9 +21,79 @@ just WebSocket clients of the same hub (`ws://127.0.0.1:7770`).
 | id      | name       | status | what                                                       |
 | ------- | ---------- | ------ | ---------------------------------------------------------- |
 | `chars` | CHARACTERS | ✅     | glyph grid: noise flow, physarum swarm, de Jong attractor, zalgo rain, waveform bars, Lissajous phase scope, edge-aware webcam-ascii |
-| `parts` | PARTICLES  | ✅     | stateless GPU curl-noise field + breathing shell, 60k–600k points |
-| `flora` | FLORA      | ✅     | murmuration (silence lands the birds), space-colonization tree growth, night sky |
+| `parts` | PARTICLES  | ✅     | stateless GPU field, 60k–600k points: curl nebula, breathing shell, spiral galaxy, data lattice, curl filaments, torus — with soft/dot/ring/square/cross point shapes, edge sharpness, depth fade, twist, tilt and FOV |
+| `flora` | FLORA      | ✅     | murmuration up to 45k birds (silence lands them), an **endlessly growing** grove of up to 7 space-colonization trees, night sky — all three stackable in one frame |
 | images  | IMAGES     | 🔜     | early-Flash-style cutout animation                         |
+
+## Layers — everything at once
+
+`system` picks the **base** layer (opaque, its palette stop 0 is the frame's
+ground). `mix.chars` / `mix.parts` / `mix.flora` fade the other two in over it,
+blended `add` / `screen` / `normal`. They are ordinary modulatable parameters,
+so `LEVEL → mix.parts` brings a whole system in with the room, and
+`SILENCE → mix.chars` at negative depth takes one away when the room drops out.
+Inside FLORA the same idea applies one level down: `+ Sky`, `+ Trees` and
+`+ Birds` stack the other inhabitants onto the mode you selected.
+
+Cost is roughly additive — three layers is three systems' work — so the layer
+faders are also the first place to look when the frame rate drops.
+
+## The landscape
+
+`Landscape` puts the living things in a place instead of on a blank ground:
+
+- **hills** — three ranges receding to the horizon, plus a sky wash and a
+  ploughed field drawn in perspective (rows converging on a vanishing point).
+- **farm** — all of that plus a fence line, a barn and silo, a multi-blade
+  windmill, chimney smoke, drifting clouds and grass along the ground line.
+
+Every position comes from a seeded hash rather than `Math.random()`, so the
+same landscape is there every night and a recalled scene looks like the one you
+left. The structures have silence behaviours like everything else: the windmill
+coasts to a stop, the clouds stall, the smoke thins.
+
+`Livestock` (0–14) adds grazing quadrupeds, scaled and faded by how far up the
+field they stand. They are the slow layer — the flock reacts in milliseconds
+and the tree grows over minutes, but the herd works in seconds: heads come up
+on a transient, they amble between patches, they bunch when startled, and in
+long silence they lie down.
+
+`Flock` picks the species, and they are the same solver with different
+constants rather than scripted formations — skeins are what strong alignment
+plus weak cohesion plus low noise actually produces:
+
+| kind | what it does |
+| --- | --- |
+| `starlings` | the murmuration: balanced, noisy, panics as a wave |
+| `geese` | migration — few birds, alignment way up, noise near zero, a steady heading, so they string out into skeins |
+| `midges` | a low tight column just above the field: tiny perception, strong separation, high jitter, slow |
+
+## Endless growth
+
+The tree no longer finishes. When a crown envelope is used up it seeds the next
+one above and around its own canopy (`Crown Reach` sets how far), and `Auto
+Frame` scales the grove down about the ground line as the silhouette outgrows
+the viewport — so an hour-long set is an hour of growth rather than a tree that
+completed in ninety seconds. Growth is still audio-driven: it advances with
+level and vigor, spurts on onsets, and stops dead in silence.
+
+The node ceiling from the quality tier (6k/14k/28k/60k across the stand) is a
+memory and stroke-cost limit, not a life expectancy. On reaching it the tree
+**sheds its oldest tips and recycles their slots**, so growth continues
+indefinitely and the canopy erodes inward behind the frontier — a growth/decay
+equilibrium rather than a tree that fills up and freezes. Only tips are ever
+shed, so nothing is orphaned, and the shed threshold is found by bisection on
+the birth stamp: a few counting passes, no sorting, no allocation, because this
+runs for as long as the set does.
+
+**`Dieback`** sets the background rate independent of the ceiling, so the tree
+is always losing a little of its oldest growth; silence accelerates it, the same
+gesture as the falling leaves one level deeper into the structure. **`Succession`**
+handles the other end — a tree that genuinely cannot grow any further fades over
+six seconds and a sapling takes its ground.
+
+Turn `Endless Growth`, `Dieback` and `Succession` all off for the original
+grow-once-and-stop behaviour.
 
 ## The concert language
 
@@ -58,7 +128,9 @@ the murmuration literature (STARFLAG / StarDisplay):
   with ←/→ in the output window or `ctl next` / `ctl prev`:
   PHASE SCOPE → WAVEFORM → RAIN TERMINAL → PHOSPHOR STORM → MYCELIUM →
   DE JONG → CAM ASCII → MURMURATION → GROWTH → NIGHT → NEBULA DRIFT →
-  SHELL PULSE.
+  SHELL PULSE → GROVE → SKY GARDEN → SPIRAL ARMS → DATA LATTICE →
+  FILAMENTS → ALL AT ONCE. The second half is the dense end of the arc:
+  endless groves, stacked systems, and the 3D modes.
 
 ## Dev
 
@@ -103,6 +175,10 @@ The F4 can't run on USB bus power: AA batteries or 9–16V DC at gigs.
 - The 7" screen is a normal 10-point Windows touch digitizer — the control
   window gets full multi-touch.
 - Start with `--quality=medium`, raise until frames drop.
+- Sharpness, cheapest first: `fx.sharpen` (one pass, four taps) → render scale
+  → **Anti-aliasing** in SETUP (MSAA 2×/4×, off by default because it
+  multiplies fragment cost — raise it until the frame rate moves, then back off
+  a step). Bloom works against all three; on the noto/ink palettes keep it low.
 
 ## Building
 

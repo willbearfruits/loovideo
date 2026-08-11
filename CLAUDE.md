@@ -49,6 +49,15 @@ One Electron app, two windows, one protocol:
 Systems implement `VisualSystem` (`systems/types.ts`). chars and flora draw on
 a 2D canvas textured onto a quad; particles is a stateless vertex-shader field.
 
+**Layers.** `LayersPass` (`output/layers.ts`) replaced `RenderPass`: it clears
+to the base system's `bg` and renders every enabled system in order into the
+same buffer before the FX chain runs. `state.system` is the base (opaque);
+`mix.<id>` is each other system's overlay opacity, and `setOverlay(on, opacity,
+blend)` tells a system to clear its canvas transparent and blend instead of
+painting a ground. Both canvas systems are `alpha: true` for this. `setActive`
+stays a transition (flora regrows its grove, chars releases the webcam), so the
+engine diffs a live-layer set rather than calling it per frame.
+
 ## The aesthetic contract (researched, deliberate — don't regress it)
 
 Built on raster-noton (Alva Noto, Ryoji Ikeda, cyclo.), netart (Nick Briz,
@@ -62,6 +71,10 @@ JODI, Vuk Ćosić), and the murmuration literature (STARFLAG/StarDisplay):
    a dot, wave flatlines). New modes must define what nothing looks like.
 3. **Stillness discipline**: when audio is active, idle animation is
    suppressed (see `audio.active` gating in chars flow). Motion means sound.
+   `chars.idle` is the deliberate escape hatch — it raises the floor under that
+   gating so the grid still breathes with an interface connected and no signal
+   (setup, soundcheck, very sparse material). Default 0 keeps the contract
+   exactly; it is an override, not a new default.
 4. **Grid discipline** in chars: glyphs live on the cell grid; leaving it
    (zalgo overflow) is a rare audio-triggered event.
 5. **Deterministic glitch**: sparkle/corruption uses `hashInt(cell, time-step)`,
@@ -88,10 +101,12 @@ JODI, Vuk Ćosić), and the murmuration literature (STARFLAG/StarDisplay):
 ## Current status / roadmap
 
 Working: chars (flow, physarum swarm, de Jong attractor, zalgo rain, waveform
-bars, Lissajous phase scope, edge-aware webcam ascii), particles (curl nebula,
-shell), flora (murmuration with landing narrative, space-colonization tree,
-night sky), 13 factory presets as a setlist, scene crossfade (freeze-frame
-dissolve on preset/system change), quality tiers, CLI.
+bars, Lissajous phase scope, edge-aware webcam ascii), particles (nebula,
+shell, galaxy, lattice, strands, torus + point shapes/sharpness/depth/twist/
+tilt/FOV), flora (murmuration to 45k birds, endlessly-growing grove of up to 7
+trees with auto-framing, night sky, all three stackable), cross-system layer
+compositing with modulatable opacities, 19 factory presets as a setlist, scene
+crossfade, quality tiers, optional MSAA, `fx.sharpen`, CLI.
 
 **Provenance**: `physarum`/`attractor` modes + the `organism` charset tiers are
 ports from the owner's own character-art practice — source pieces live in
@@ -114,5 +129,35 @@ ESP32 companion controller; WebGPU/TSL upgrade later.
 - Scenes (presets) exclude device choices and quality — those are rig config.
 - The space-colonization tree needs its trunk bootstrap (in `tree.ts::reset`);
   without it growth stalls at the root. Don't "simplify" it away.
+- `tree.ts` is written to be allocation-free per frame on purpose: `grow()`
+  reuses scratch arrays, the draw order is counting-sorted only when the tree
+  grows, and spent attractors are compacted. Endless growth means these run
+  forever — reintroducing a per-tick `new Float32Array(n)` will show up as GC
+  stutter minutes into a set, not immediately.
+- Tree nodes are a slot pool, not an append-only list: `alive`/`freeList`
+  recycle slots freed by dieback, `nNodes` is a high-water mark and
+  `liveCount` is the real population. Anything iterating nodes MUST check
+  `alive[i]`. Freeing leaves stale hash links, so `hashDirty` forces a full
+  `rebuildHash()` before the next `grow()`. Index order stops being
+  topological once recycling starts — the sway loop accepts one frame of lag
+  on regrown twigs rather than sorting every tick (documented at the loop).
+- `flock.ts` uses a sine LUT and `sqrt` rather than `Math.sin`/`Math.hypot` in
+  the boid loop, and splats to an ImageData buffer above 12k birds. At 45k the
+  per-bird call overhead is the frame.
+- MSAA is a rig setting (`quality.msaa`, SETUP tab), not a quality-tier
+  implication — it multiplies fragment cost and wants judging on the Ally.
+- **Benchmarking**: fps telemetry from a locked/idle Windows session is
+  meaningless — the compositor throttles. Measure with the screen awake.
+- `scenery.ts` and `fauna.ts` are deterministic by construction (seeded hash,
+  never `Math.random()`) so the landscape is the same every night and a
+  recalled scene matches the one you left. Keep it that way.
+- The control window is explicitly placed off the output display in
+  `main/index.ts::createWindows`; without it, a docked Ally opens the controls
+  half on the projector.
+- Rig scripts that live outside this repo: `C:\Users\ASUS\Scripts\
+  hdmi-extend.ps1` (scheduled task "HDMI Extend On Connect" — extends onto a
+  newly attached display instead of switching to it) and
+  `launch-loovideo.cmd` / the desktop shortcut, which rebuilds then starts
+  `--fullscreen --display=1`.
 - On Linux dev sandboxes without GPU access Electron falls back to SwiftShader
   — fps numbers there are meaningless, judge on real hardware.

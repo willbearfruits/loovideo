@@ -220,6 +220,234 @@ export const FACTORY_PRESETS: Record<string, PresetPatch> = {
       { id: 'r2', source: 'band6', target: 'parts.size', depth: 0.5 },
       { id: 'r3', source: 'onset', target: 'fx.rgbshift', depth: 0.3 }
     ]
+  },
+
+  // --- second half of the arc: density, stacking, endless growth -----------
+
+  // A stand of trees that never finishes. Each spent crown seeds the next one
+  // higher and wider; the auto-frame pulls back as the canopy outgrows the
+  // screen, so an hour-long set is an hour of growth.
+  GROVE: {
+    system: 'flora',
+    values: {
+      'flora.mode': 'tree',
+      'flora.palette': 'ink',
+      'flora.endless': true,
+      'flora.trees': 4,
+      'flora.reach': 1.45,
+      'flora.fit': 0.85,
+      'flora.density': 0.8,
+      'flora.wind': 0.7,
+      'flora.vigor': 1.4,
+      'flora.horizon': 0.86,
+      'fx.grain': 0.1,
+      'fx.vignette': 0.24,
+      'fx.sharpen': 0.35
+    },
+    routes: [
+      { id: 'r1', source: 'band0', target: 'flora.wind', depth: 0.35 },
+      { id: 'r2', source: 'level', target: 'flora.vigor', depth: 0.3 }
+    ]
+  },
+
+  // Everything flora has, at once: night sky behind, a grove growing in it,
+  // a full murmuration through the branches.
+  'SKY GARDEN': {
+    system: 'flora',
+    values: {
+      'flora.mode': 'flock',
+      'flora.palette': 'noto',
+      'flora.addStars': true,
+      'flora.addTree': true,
+      'flora.trees': 3,
+      'flora.endless': true,
+      'flora.reach': 1.2,
+      'flora.fit': 0.8,
+      'flora.density': 0.95,
+      'flora.wind': 0.7,
+      'flora.vigor': 1.3,
+      'flora.scatter': 0.8,
+      'flora.horizon': 0.84,
+      'fx.bloom': 0.3,
+      'fx.grain': 0.12,
+      'fx.vignette': 0.32,
+      'fx.sharpen': 0.3
+    },
+    routes: [
+      { id: 'r1', source: 'lfo0', target: 'flora.wind', depth: 0.2 },
+      { id: 'r2', source: 'onset', target: 'fx.flash', depth: 0.16 }
+    ]
+  },
+
+  'SPIRAL ARMS': {
+    system: 'parts',
+    values: {
+      'parts.mode': 'galaxy',
+      'parts.shape': 'dot',
+      'parts.palette': 'vapor',
+      'parts.density': 0.9,
+      'parts.sharp': 0.8,
+      'parts.depth': 0.55,
+      'parts.size': 0.7,
+      'parts.tilt': 0.55,
+      'parts.orbit': 0.18,
+      'parts.drift': 0.9,
+      'fx.bloom': 0.5,
+      'fx.sharpen': 0.4
+    },
+    routes: [
+      { id: 'r1', source: 'band0', target: 'parts.turbulence', depth: 0.4 },
+      { id: 'r2', source: 'lfo0', target: 'parts.hue', depth: 0.35 },
+      { id: 'r3', source: 'band6', target: 'parts.size', depth: 0.3 }
+    ]
+  },
+
+  // Ikeda's data cube: a rigid grid, hard square points, no glow to hide in.
+  'DATA LATTICE': {
+    system: 'parts',
+    values: {
+      'parts.mode': 'lattice',
+      'parts.shape': 'square',
+      'parts.palette': 'noto',
+      'parts.density': 0.85,
+      'parts.sharp': 1,
+      'parts.depth': 0.7,
+      'parts.size': 0.45,
+      'parts.spread': 1.2,
+      'parts.orbit': 0.22,
+      'parts.tilt': 0.2,
+      'fx.bloom': 0.12,
+      'fx.grain': 0.08,
+      'fx.sharpen': 0.6
+    },
+    routes: [
+      { id: 'r1', source: 'band0', target: 'parts.turbulence', depth: 0.5 },
+      { id: 'r2', source: 'onset', target: 'fx.flash', depth: 0.2 },
+      { id: 'r3', source: 'level', target: 'parts.twist', depth: 0.25 }
+    ]
+  },
+
+  FILAMENTS: {
+    system: 'parts',
+    values: {
+      'parts.mode': 'strands',
+      'parts.shape': 'soft',
+      'parts.palette': 'ice',
+      'parts.density': 1,
+      'parts.sharp': 0.5,
+      'parts.depth': 0.45,
+      'parts.size': 0.55,
+      'parts.turbulence': 1.1,
+      'parts.drift': 0.8,
+      'parts.twist': 0.35,
+      'fx.bloom': 0.55,
+      'fx.trails': 0.2
+    },
+    routes: [
+      { id: 'r1', source: 'band0', target: 'parts.turbulence', depth: 0.45 },
+      { id: 'r2', source: 'band4', target: 'parts.twist', depth: 0.4 },
+      { id: 'r3', source: 'level', target: 'fx.bloom', depth: 0.25 }
+    ]
+  },
+
+  // A place rather than a system: ploughed field in perspective, fence, barn,
+  // silo, a windmill that coasts to a stop in silence, cattle that lift their
+  // heads on a transient and lie down when the room goes quiet, geese crossing
+  // above, and a stand of trees that replaces itself as each one matures.
+  FARM: {
+    system: 'flora',
+    values: {
+      'flora.mode': 'tree',
+      'flora.scene': 'farm',
+      'flora.palette': 'ink',
+      'flora.addFlock': true,
+      'flora.flockKind': 'geese',
+      'flora.animals': 7,
+      'flora.trees': 3,
+      'flora.endless': true,
+      'flora.succession': true,
+      'flora.reach': 1.25,
+      'flora.fit': 0.9,
+      'flora.density': 0.7,
+      'flora.wind': 0.6,
+      'flora.vigor': 1.2,
+      'flora.scatter': 0.45,
+      'flora.horizon': 0.62,
+      'fx.bloom': 0,
+      'fx.grain': 0.12,
+      'fx.vignette': 0.26,
+      'fx.sharpen': 0.35
+    },
+    routes: [
+      { id: 'r1', source: 'band0', target: 'flora.wind', depth: 0.3 },
+      { id: 'r2', source: 'level', target: 'flora.vigor', depth: 0.3 }
+    ]
+  },
+
+  // Same farm after dark: night sky over the field, starlings coming in to
+  // roost, the windmill still turning while there is sound in the room.
+  'FARM AT NIGHT': {
+    system: 'flora',
+    values: {
+      'flora.mode': 'flock',
+      'flora.scene': 'farm',
+      'flora.palette': 'noto',
+      'flora.addStars': true,
+      'flora.addTree': true,
+      'flora.flockKind': 'starlings',
+      'flora.animals': 5,
+      'flora.trees': 2,
+      'flora.endless': true,
+      'flora.succession': true,
+      'flora.density': 0.85,
+      'flora.wind': 0.5,
+      'flora.vigor': 1.1,
+      'flora.scatter': 0.75,
+      'flora.horizon': 0.68,
+      'flora.fit': 0.9,
+      'fx.bloom': 0.28,
+      'fx.grain': 0.12,
+      'fx.vignette': 0.36,
+      'fx.sharpen': 0.3
+    },
+    routes: [
+      { id: 'r1', source: 'lfo0', target: 'flora.wind', depth: 0.2 },
+      { id: 'r2', source: 'onset', target: 'fx.flash', depth: 0.14 }
+    ]
+  },
+
+  // Three systems in one frame: the flock is the ground, the particle field
+  // sits over it, and the glyph grid rides on top — LEVEL brings the stack in.
+  'ALL AT ONCE': {
+    system: 'flora',
+    values: {
+      'flora.mode': 'flock',
+      'flora.palette': 'noto',
+      'flora.addStars': true,
+      'flora.density': 0.9,
+      'flora.scatter': 0.8,
+      'mix.parts': 0.55,
+      'mix.chars': 0.35,
+      'mix.blend': 'screen',
+      'parts.mode': 'strands',
+      'parts.palette': 'ice',
+      'parts.size': 0.5,
+      'parts.sharp': 0.6,
+      'parts.depth': 0.5,
+      'chars.mode': 'scope',
+      'chars.palette': 'noto',
+      'chars.density': 0.5,
+      'fx.bloom': 0.35,
+      'fx.grain': 0.12,
+      'fx.vignette': 0.3,
+      'fx.sharpen': 0.35
+    },
+    routes: [
+      { id: 'r1', source: 'level', target: 'mix.parts', depth: 0.35 },
+      { id: 'r2', source: 'band6', target: 'mix.chars', depth: 0.4 },
+      { id: 'r3', source: 'silence', target: 'mix.chars', depth: -0.3 },
+      { id: 'r4', source: 'onset', target: 'fx.flash', depth: 0.15 }
+    ]
   }
 }
 

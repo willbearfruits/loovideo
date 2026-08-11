@@ -6,7 +6,7 @@ import * as THREE from 'three'
 import { createNoise3D } from 'simplex-noise'
 import { PALETTES } from '../../../../shared/palettes'
 import type { AudioFrame } from '../../audio'
-import { Params, type SystemCtx, type VisualSystem } from '../types'
+import { Params, applyBlend, type LayerBlend, type SystemCtx, type VisualSystem } from '../types'
 import {
   buildAtlas,
   buildEdgeAtlas,
@@ -30,12 +30,15 @@ export class CharactersSystem implements VisualSystem {
   readonly id = 'chars' as const
   readonly scene = new THREE.Scene()
   readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+  readonly bg = new THREE.Color(0x000000)
 
   private ctx!: SystemCtx
   private canvas = document.createElement('canvas')
-  private c2d = this.canvas.getContext('2d', { alpha: false })!
+  // alpha:true so the grid can be stacked over another system as a layer
+  private c2d = this.canvas.getContext('2d', { alpha: true })!
   private texture = new THREE.CanvasTexture(this.canvas)
   private material: THREE.MeshBasicMaterial
+  private overlay = false
 
   private atlas: Atlas | null = null
   private edgeAtlas: Atlas | null = null
@@ -68,15 +71,27 @@ export class CharactersSystem implements VisualSystem {
   private camCanvas = document.createElement('canvas')
   private camCtx = this.camCanvas.getContext('2d', { willReadFrequently: true })!
   private active = false
+  /** chars.idle, cached per frame: the floor under the audio-active gating */
+  private idle = 0
+  /** chars.drive, cached per frame: gain on the level/onset term */
+  private drive = 1
 
   constructor() {
     this.texture.colorSpace = THREE.SRGBColorSpace
     this.texture.minFilter = THREE.LinearFilter
     this.texture.magFilter = THREE.LinearFilter
     this.texture.generateMipmaps = false
-    this.material = new THREE.MeshBasicMaterial({ map: this.texture })
+    this.material = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true })
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material)
     this.scene.add(quad)
+  }
+
+  setOverlay(on: boolean, opacity: number, blend: LayerBlend): void {
+    this.overlay = on
+    this.material.opacity = on ? opacity : 1
+    applyBlend(this.material, on ? blend : 'normal')
+    this.material.depthTest = false
+    this.material.depthWrite = !on
   }
 
   init(ctx: SystemCtx): void {
@@ -127,6 +142,8 @@ export class CharactersSystem implements VisualSystem {
   update(dt: number, time: number, p: Params, audio: AudioFrame): void {
     if (!this.active) return
     const mode = p.str('chars.mode')
+    this.idle = p.num('chars.idle')
+    this.drive = p.num('chars.drive')
     this.ctx.webcam.ensure(mode === 'cam')
     // the organism modes use their own tiered charset — that progression IS the piece
     const charset =
@@ -136,9 +153,14 @@ export class CharactersSystem implements VisualSystem {
 
     const g = this.c2d
     const stops = PALETTES[p.str('chars.palette')] ?? PALETTES.phosphor
+    this.bg.set(stops[0]).convertSRGBToLinear()
     g.globalAlpha = 1
-    g.fillStyle = stops[0]
-    g.fillRect(0, 0, this.canvas.width, this.canvas.height)
+    if (this.overlay) {
+      g.clearRect(0, 0, this.canvas.width, this.canvas.height)
+    } else {
+      g.fillStyle = stops[0]
+      g.fillRect(0, 0, this.canvas.width, this.canvas.height)
+    }
 
     switch (mode) {
       case 'rain':
@@ -208,7 +230,9 @@ export class CharactersSystem implements VisualSystem {
     }
 
     const bass = (audio.bands[0] + audio.bands[1]) / 2
-    const metab = audio.active ? 0.35 + audio.level * 1.4 : 1
+    const metab = audio.active
+      ? Math.max((0.35 + audio.level * 1.4) * this.drive, this.idle)
+      : 1
     const SENSE_DIST = 4 + p.num('chars.warp') * 5
     const SENSE_ANGLE = 0.6
     const TURN = 0.45
@@ -335,7 +359,9 @@ export class CharactersSystem implements VisualSystem {
     const warp = p.num('chars.warp')
 
     // morph clock: runs with the music, freezes in silence
-    const morph = audio.active ? 0.06 + audio.level * 0.45 : 0.2
+    const morph = audio.active
+      ? Math.max((0.06 + audio.level * 0.45) * this.drive, 0.2 * this.idle)
+      : 0.2
     this.atT += dt * morph * Math.max(0.05, p.num('chars.flow'))
     if (audio.onset > 0.85 && this.atOnsetPrev <= 0.85) this.atT += 2 + Math.random() * 6
     this.atOnsetPrev = audio.onset
@@ -351,7 +377,9 @@ export class CharactersSystem implements VisualSystem {
     for (let i = 0; i < size; i++) grid[i] *= decay
 
     // silence starves the figure — fewer points feed the cloud
-    const feed = (audio.active ? 0.35 + audio.level * 0.9 : 1) * (1 - audio.silence * 0.92)
+    const feed =
+      (audio.active ? Math.max((0.35 + audio.level * 0.9) * this.drive, this.idle) : 1) *
+      (1 - audio.silence * 0.92)
     const iters = Math.round(size * 1.15 * feed)
     let x = Math.sin(t * 3) * 0.1
     let y = Math.cos(t * 2) * 0.1
@@ -411,7 +439,7 @@ export class CharactersSystem implements VisualSystem {
 
     const L = audio.waveform
     const R = audio.waveformR
-    const amp = 0.46 * (0.4 + p.num('chars.contrast') * 0.6)
+    const amp = 0.46 * (0.4 + p.num('chars.contrast') * 0.6) * (0.5 + this.drive * 0.45)
     const cx = cols / 2
     const cy = rows / 2
     let energy = 0
@@ -476,7 +504,11 @@ export class CharactersSystem implements VisualSystem {
     const { cols, rows, cell } = this
     const wf = audio.waveform
     const mid = rows / 2
-    const amp = rows * 0.42 * (0.35 + p.num('chars.contrast') * 0.65)
+    // wave/scope read the audio buffer directly, so they never saw the idle
+    // gating — but they still need chars.drive, or sparse material barely
+    // lifts off the hairline
+    const amp =
+      rows * 0.42 * (0.35 + p.num('chars.contrast') * 0.65) * (0.5 + this.drive * 0.45)
     const zalgo = p.num('chars.zalgo')
     const stops = PALETTES[p.str('chars.palette')] ?? PALETTES.phosphor
 
@@ -548,7 +580,11 @@ export class CharactersSystem implements VisualSystem {
 
     // stillness discipline: when sound drives the show, the field only truly
     // moves when there IS sound; with audio off it flows autonomously
-    const evolve = audio.active ? 0.1 + audio.level * 1.9 + audio.onset * 0.5 : 1
+    // chars.idle raises the floor so the field still breathes with no signal;
+    // chars.drive is the gain on the dynamics on top of that floor
+    const evolve = audio.active
+      ? Math.max((0.1 + audio.level * 1.9 + audio.onset * 0.5) * this.drive, this.idle)
+      : 1
     this.flowT += dt * evolve * flowRate
     const dim = 1 - audio.silence * 0.55 // sustained quiet fades toward threshold
 

@@ -3,14 +3,13 @@
 
 import * as THREE from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RGBShiftShader } from 'three/addons/shaders/RGBShiftShader.js'
 
-import { QUALITY_TIERS, type SystemId } from '../../shared/params'
+import { QUALITY_TIERS, SYSTEM_IDS, type ParamValue, type SystemId } from '../../shared/params'
 import { PALETTES, isPaper } from '../../shared/palettes'
 import { computeEffective, emptySources, lfoValue, type ModSources } from '../../shared/mod'
 import type { OutputNet } from './net'
@@ -18,7 +17,8 @@ import { AudioEngine } from './audio'
 import { Webcam } from './webcam'
 import { GradeShader } from './fx'
 import { SceneFade } from './fade'
-import { Params, type VisualSystem } from './systems/types'
+import { LayersPass } from './layers'
+import { Params, type LayerBlend, type VisualSystem } from './systems/types'
 import { CharactersSystem } from './systems/characters'
 import { ParticlesSystem } from './systems/particles'
 import { FloraSystem } from './systems/flora'
@@ -28,7 +28,7 @@ const TELEMETRY_MS = 66
 export class Engine {
   private renderer: THREE.WebGLRenderer
   private composer: EffectComposer
-  private renderPass: RenderPass
+  private layersPass: LayersPass
   private afterimage: AfterimagePass
   private bloom: UnrealBloomPass
   private rgbShift: ShaderPass
@@ -36,6 +36,8 @@ export class Engine {
 
   private systems: Record<SystemId, VisualSystem>
   private activeId: SystemId | null = null
+  private liveLayers = new Set<SystemId>()
+  private lastMsaa = -1
 
   private params = new Params()
   private audio = new AudioEngine()
@@ -70,14 +72,14 @@ export class Engine {
     this.net.onSceneChange = (duration) => fade.freeze(duration)
 
     const size = new THREE.Vector2(window.innerWidth, window.innerHeight)
-    this.renderPass = new RenderPass(new THREE.Scene(), new THREE.PerspectiveCamera())
+    this.layersPass = new LayersPass()
     this.afterimage = new AfterimagePass(0.9)
     this.bloom = new UnrealBloomPass(size, 0.6, 0.55, 0.62)
     this.rgbShift = new ShaderPass(RGBShiftShader)
     this.grade = new ShaderPass(GradeShader)
 
     this.composer = new EffectComposer(this.renderer)
-    this.composer.addPass(this.renderPass)
+    this.composer.addPass(this.layersPass)
     this.composer.addPass(this.afterimage)
     this.composer.addPass(this.bloom)
     this.composer.addPass(this.rgbShift)
@@ -87,7 +89,8 @@ export class Engine {
     const ctx = {
       renderer: this.renderer,
       webcam: this.webcam,
-      quality: () => ({ ...this.net.state.quality, ...QUALITY_TIERS[this.net.state.quality.preset] })
+      quality: () => ({ ...this.net.state.quality, ...QUALITY_TIERS[this.net.state.quality.preset] }),
+      setParam: (id: string, value: ParamValue) => this.net.send({ t: 'set', id, value })
     }
     this.systems = {
       chars: new CharactersSystem(),
@@ -114,19 +117,62 @@ export class Engine {
     this.composer.setSize(w, h)
     const u = this.grade.uniforms as typeof GradeShader.uniforms
     u.uRes.value = [w * scale, h * scale]
+
+    // MSAA on the composite target: point and line edges get resolved before
+    // bloom smears them. Disposing forces three to rebuild at the new count.
+    const msaa = this.net.state.quality.msaa ?? 0
+    if (msaa !== this.lastMsaa) {
+      this.lastMsaa = msaa
+      for (const rt of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+        rt.samples = msaa
+        rt.dispose()
+      }
+    }
+
     for (const s of Object.values(this.systems)) s.resize(w, h)
   }
 
-  private setActiveSystem(id: SystemId): void {
-    if (id === this.activeId) return
-    if (this.activeId) this.systems[this.activeId].setActive(false)
-    this.activeId = id
-    const sys = this.systems[id]
-    sys.setActive(true)
-    this.renderPass.scene = sys.scene as THREE.Scene
-    this.renderPass.camera = sys.camera as THREE.Camera
-    // stale trails from the previous system would smear across the switch
-    ;(this.afterimage as unknown as { reset?: () => void }).reset?.()
+  /**
+   * Decide which systems are live this frame and in what order. The `system`
+   * selector is the base (opaque); `mix.<id>` fades the other two in over it.
+   */
+  private setLayers(base: SystemId, p: Params): void {
+    if (base !== this.activeId) {
+      this.activeId = base
+      // stale trails from the previous base would smear across the switch
+      ;(this.afterimage as unknown as { reset?: () => void }).reset?.()
+    }
+
+    const blend = (p.str('mix.blend') || 'add') as LayerBlend
+    const order: SystemId[] = [base, ...SYSTEM_IDS.filter((id) => id !== base)]
+    const wanted = new Set<SystemId>([base])
+    const list: VisualSystem[] = []
+
+    for (const id of order) {
+      const sys = this.systems[id]
+      if (id === base) {
+        sys.setOverlay(false, 1, blend)
+        list.push(sys)
+        continue
+      }
+      const amount = p.num(`mix.${id}`)
+      if (amount <= 0.004) continue
+      wanted.add(id)
+      sys.setOverlay(true, Math.min(1, amount), blend)
+      list.push(sys)
+    }
+
+    // setActive is a transition, not a per-frame flag: flora regrows its grove
+    // on entry and chars releases the webcam on exit
+    for (const id of SYSTEM_IDS) {
+      const on = wanted.has(id)
+      if (on === this.liveLayers.has(id)) continue
+      this.systems[id].setActive(on)
+      if (on) this.liveLayers.add(id)
+      else this.liveLayers.delete(id)
+    }
+
+    this.layersPass.layers = list
   }
 
   private manageAudio(now: number): void {
@@ -203,10 +249,10 @@ export class Engine {
     this.params.eff = computeEffective(st.values, st.routes, sources)
     const p = this.params
 
-    // active system
-    this.setActiveSystem(st.system)
-    const sys = this.systems[st.system]
-    sys.update(sdt, this.scaledTime, p, audioFrame)
+    // layer stack: base system + any faded-in overlays
+    this.setLayers(st.system, p)
+    for (const s of this.layersPass.layers) s.update(sdt, this.scaledTime, p, audioFrame)
+    this.layersPass.clearColor.copy(this.systems[st.system].bg)
 
     // FX chain
     const trails = p.num('fx.trails')
@@ -231,6 +277,7 @@ export class Engine {
     gu.uVignette.value = p.num('fx.vignette')
     gu.uGrain.value = p.num('fx.grain')
     gu.uPixelate.value = p.num('fx.pixelate')
+    gu.uSharpen.value = p.num('fx.sharpen')
     // strobe limiter (WCAG 2.3.1): max 3 full-field flash events per rolling
     // second — a fast rattle on a contact mic must not strobe the room
     let flash = p.num('fx.flash')
@@ -271,9 +318,10 @@ export class Engine {
         ? 'demo'
         : (this.audio.error ?? 'off')
     const meter = '▮'.repeat(Math.round(level * 12)).padEnd(12, '·')
+    const stack = this.layersPass.layers.map((s) => s.id).join('+')
     this.hud.textContent =
       `${Math.round(this.fpsEma)} fps  ${window.innerWidth}×${window.innerHeight} @${st.quality.renderScale}x ${st.quality.preset}\n` +
-      `sys ${st.system}  audio ${audioState}\n` +
+      `sys ${st.system}  layers ${stack}  audio ${audioState}\n` +
       `lvl ${meter}  ${this.net.connected ? 'hub ok' : 'HUB DOWN'}`
   }
 }

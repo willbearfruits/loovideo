@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  MSAA_LEVELS,
   PARAM_MAP,
   SYSTEM_IDS,
   defaultState,
@@ -115,7 +116,12 @@ export class ParamStore {
   }
 
   setQuality(q: Partial<QualityState>): QualityState {
-    this.state.quality = { ...this.state.quality, ...q }
+    const next = { ...this.state.quality, ...q }
+    // a bogus sample count would make three rebuild the composite target with
+    // an invalid format, so pin it to what WebGL2 actually accepts here
+    if (!MSAA_LEVELS.includes(next.msaa)) next.msaa = 0
+    next.renderScale = Math.min(2, Math.max(0.5, Number(next.renderScale) || 1))
+    this.state.quality = next
     this.persist()
     return this.state.quality
   }

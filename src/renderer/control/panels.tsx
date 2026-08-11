@@ -5,6 +5,7 @@ import {
   SYSTEMS,
   type ModRoute,
   type ModSource,
+  type MsaaLevel,
   type ParamDef,
   type QualityPreset
 } from '../../shared/params'
@@ -106,9 +107,29 @@ export function SystemPanel(): JSX.Element {
 }
 
 export function MixPanel(): JSX.Element {
+  useNetState()
+  const base = net.state.system
   return (
     <>
       <Group title="MASTER" group="master" />
+      <div className="block">
+        <h3>LAYERS · STACK SYSTEMS</h3>
+        <p className="hint" style={{ marginTop: 0 }}>
+          <b>{SYSTEMS.find((s) => s.id === base)?.label ?? base}</b> is the base layer (opaque).
+          Fade the other two in over it — these are modulatable, so route LEVEL or an LFO here to
+          bring a whole system in and out.
+        </p>
+        {PARAMS.filter((p) => p.group === 'mix' && p.kind === 'enum').map((d) => (
+          <div key={d.id} style={{ marginBottom: 10 }}>
+            <ParamControl def={d} />
+          </div>
+        ))}
+        {PARAMS.filter((p) => p.group === 'mix' && p.kind === 'number').map((d) => (
+          <div key={d.id} style={{ opacity: d.id === `mix.${base}` ? 0.4 : 1 }}>
+            <ParamControl def={d} />
+          </div>
+        ))}
+      </div>
       <Group title="FX CHAIN" group="fx" />
     </>
   )
@@ -349,6 +370,23 @@ export function SetupPanel(): JSX.Element {
             />
           </div>
         </div>
+        <div className="row">
+          <span className="hint" style={{ width: 130 }}>
+            Anti-aliasing
+          </span>
+          <div style={{ flex: 1 }}>
+            <Segmented
+              options={['0', '2', '4']}
+              labels={['OFF', '2×', '4×']}
+              value={String(q.msaa ?? 0)}
+              onChange={(v) => net.setQuality({ msaa: Number(v) as MsaaLevel })}
+            />
+          </div>
+        </div>
+        <p className="hint">
+          MSAA sharpens PARTICLES most — edges resolve before bloom softens them — and costs
+          fragment throughput. Turn it up until the frame rate moves, then back off one step.
+        </p>
       </div>
 
       <div className="block">

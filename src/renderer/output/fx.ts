@@ -9,6 +9,7 @@ export const GradeShader = {
     uVignette: { value: 0.35 },
     uGrain: { value: 0.15 },
     uPixelate: { value: 0.0 },
+    uSharpen: { value: 0.0 },
     uFlash: { value: 0.0 },
     uInvert: { value: 0.0 },
     uTime: { value: 0.0 },
@@ -27,6 +28,7 @@ export const GradeShader = {
     uniform float uVignette;
     uniform float uGrain;
     uniform float uPixelate;
+    uniform float uSharpen;
     uniform float uFlash;
     uniform float uInvert;
     uniform float uTime;
@@ -45,6 +47,18 @@ export const GradeShader = {
         uv = (floor(uv * g) + 0.5) / g;
       }
       vec3 c = texture2D(tDiffuse, uv).rgb;
+
+      // unsharp mask: bloom and the canvas upscale both soften the frame, and
+      // on a 7" panel a little edge recovery is the difference between glyphs
+      // you can read and a glow. Four taps — one pass, no extra target.
+      if (uSharpen > 0.002) {
+        vec2 px = 1.0 / uRes;
+        vec3 blur = texture2D(tDiffuse, uv + vec2(px.x, 0.0)).rgb
+                  + texture2D(tDiffuse, uv - vec2(px.x, 0.0)).rgb
+                  + texture2D(tDiffuse, uv + vec2(0.0, px.y)).rgb
+                  + texture2D(tDiffuse, uv - vec2(0.0, px.y)).rgb;
+        c = clamp(c + (c - blur * 0.25) * uSharpen * 1.6, 0.0, 1.0);
+      }
 
       float d = distance(vUv, vec2(0.5));
       c *= 1.0 - uVignette * 1.15 * smoothstep(0.28, 0.72, d);

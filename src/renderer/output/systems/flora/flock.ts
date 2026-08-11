@@ -9,6 +9,8 @@
 // the roost and the birds funnel down to the ground line — the murmuration's
 // real-world ending — until sound returns and they take off in a stagger.
 
+export type FlockKind = 'starlings' | 'geese' | 'midges'
+
 export interface FlockDrive {
   energy: number // vigor param 0..2
   vigor: number // same value; tree/stars name it vigor
@@ -20,10 +22,79 @@ export interface FlockDrive {
   onset: number
   silence: number
   horizonY: number
+  kind: FlockKind
+}
+
+/**
+ * The three flocks are the same solver with different constants — no scripted
+ * formations. Skeins and columns are what strong alignment plus weak cohesion
+ * plus low noise actually produces, which is the whole point of the STARFLAG
+ * model; hard-coding a V would throw that away.
+ *
+ *   starlings — the murmuration: balanced, noisy, panic-prone
+ *   geese     — migration: alignment way up, noise near zero, a steady heading
+ *               and a wide perception radius, so they string out into skeins
+ *   midges    — a low tight column: tiny perception, strong separation, high
+ *               jitter, slow, and anchored just above the ground
+ */
+interface KindProfile {
+  count: number // multiplier on the requested bird count
+  align: number
+  cohesion: number
+  separation: number
+  noise: number
+  speed: number
+  perception: number
+  sepRadius: number
+  freeZone: number
+  /** vertical placement of the roost anchor, 0 = top of frame, 1 = ground */
+  anchorY: number
+  /** steady lateral heading — migration rather than milling */
+  migrate: number
+  panic: number
+}
+
+const PROFILES: Record<FlockKind, KindProfile> = {
+  starlings: {
+    count: 1, align: 4.2, cohesion: 0.05, separation: 260, noise: 1,
+    speed: 1, perception: 88, sepRadius: 14, freeZone: 0.36, anchorY: 0.34,
+    migrate: 0, panic: 1
+  },
+  geese: {
+    count: 0.04, align: 9.5, cohesion: 0.02, separation: 420, noise: 0.12,
+    speed: 0.85, perception: 190, sepRadius: 30, freeZone: 0.62, anchorY: 0.2,
+    migrate: 0.5, panic: 0.35
+  },
+  midges: {
+    count: 1.35, align: 1.6, cohesion: 0.16, separation: 520, noise: 2.6,
+    speed: 0.42, perception: 34, sepRadius: 9, freeZone: 0.1, anchorY: 0.86,
+    migrate: 0, panic: 0.5
+  }
+}
+
+export function flockCountScale(kind: FlockKind): number {
+  return PROFILES[kind]?.count ?? 1
 }
 
 const FLY = 0
 const PERCHED = 2
+
+// At tens of thousands of birds the per-bird trig and Math.hypot calls are the
+// frame, not the neighbour search. A sine table and sqrt cost a fraction, and
+// at this amplitude the table's error is far below a pixel.
+const SIN_BITS = 12
+const SIN_N = 1 << SIN_BITS
+const SIN_MASK = SIN_N - 1
+const SIN_SCALE = SIN_N / (Math.PI * 2)
+const SIN_LUT = new Float32Array(SIN_N)
+for (let i = 0; i < SIN_N; i++) SIN_LUT[i] = Math.sin((i / SIN_N) * Math.PI * 2)
+
+function fsin(x: number): number {
+  return SIN_LUT[((x * SIN_SCALE) | 0) & SIN_MASK]
+}
+function fcos(x: number): number {
+  return SIN_LUT[(((x * SIN_SCALE) | 0) + (SIN_N >> 2)) & SIN_MASK]
+}
 
 export class Flock {
   n = 0
@@ -46,6 +117,14 @@ export class Flock {
   private strikeX = 0
   private strikeY = 0
   private strikeT = 1e9
+
+  // large-flock fast path (see drawSplat)
+  private splatCanvas: HTMLCanvasElement | null = null
+  private splatCtx: CanvasRenderingContext2D | null = null
+  private splatImg: ImageData | null = null
+  private splatBuf: Uint32Array | null = null
+  private splatW = 0
+  private splatH = 0
 
   resize(count: number, w: number, h: number): void {
     if (count === this.n) return
@@ -117,25 +196,38 @@ export class Flock {
     this.lastOnset = d.onset
     this.strikeT += dt
 
+    const prof = PROFILES[d.kind] ?? PROFILES.starlings
+
     // roost anchor: drifts slowly across the sky; silence sinks it to the
-    // ground line (pre-roost descent) and calms the cruise speed
-    const anchorX = w * (0.5 + 0.12 * Math.sin(time * 0.033) + 0.06 * Math.sin(time * 0.011 + 2))
-    const skyY = h * 0.34
+    // ground line (pre-roost descent) and calms the cruise speed. Migrating
+    // kinds sweep it steadily sideways instead of milling around a point.
+    const sweep = prof.migrate > 0 ? Math.sin(time * 0.021) * prof.migrate : 0
+    const anchorX =
+      w * (0.5 + sweep + 0.12 * Math.sin(time * 0.033) + 0.06 * Math.sin(time * 0.011 + 2))
+    const skyY = h * prof.anchorY
     const anchorY = skyY + (d.horizonY - skyY) * d.silence
-    const freeR = Math.min(w, h) * (0.36 - d.silence * 0.16)
+    const freeR = Math.min(w, h) * (prof.freeZone - d.silence * prof.freeZone * 0.45)
     const rampR = Math.min(w, h) * 0.25
 
-    const cruiseBase = (215 + 95 * Math.min(2, d.energy) * (0.4 + d.level)) * u * (1 - d.silence * 0.45)
+    const cruiseBase =
+      (215 + 95 * Math.min(2, d.energy) * (0.4 + d.level)) *
+      u * prof.speed * (1 - d.silence * 0.45)
     const maxSp = cruiseBase * 1.35
     const minSp = cruiseBase * 0.62
-    const sepR = 14 * u
+    const sepR = prof.sepRadius * u
     const sepR2 = sepR * sepR
-    const R = 88 * u // perception cap; k-nearest-ish via 7-neighbor cap
+    const R = prof.perception * u // perception cap; k-nearest-ish via 7-neighbor cap
     const R2 = R * R
     const cohBoost = 1 + d.bass * 2.6
     const groundY = d.horizonY
     const landBase = d.silence > 0.4 ? (d.silence - 0.35) * 0.5 : 0
     const wake = d.silence < 0.2
+    // frame constants — these were being recomputed once per bird
+    const panicDecay = Math.exp(-dt / 1.1)
+    const relax = Math.min(1, dt / 0.5)
+    const gustAx = 30 * d.wind
+    const gustAy = 14 * d.wind
+    const jitter = 40 * u
 
     for (let i = 0; i < n; i++) {
       if (this.state[i] === PERCHED) {
@@ -196,13 +288,14 @@ export class Flock {
 
       // panic: decay + contagion (copied at 0.7× from the most panicked
       // neighbor — the wave travels faster than the birds do)
-      let pn = Math.max(this.panic[i] * Math.exp(-dt / 1.1), 0.7 * panicMax)
+      let pn = Math.max(this.panic[i] * panicDecay, 0.7 * panicMax)
       if (this.strikeT < 0.35) {
         const dx = this.px[i] - this.strikeX
         const dy = this.py[i] - this.strikeY
         const dist2 = dx * dx + dy * dy
         const fear = 190 * u * (0.6 + d.scatter)
-        if (dist2 < fear * fear) pn = 1
+        // geese do not panic like starlings do — a skein absorbs a strike
+        if (dist2 < fear * fear) pn = Math.max(pn, prof.panic)
       }
       this.panic[i] = pn
 
@@ -211,19 +304,19 @@ export class Flock {
       if (cnt > 0) {
         const inv = 1 / cnt
         // alignment dominant · separation short+strong · cohesion weak
-        ax += (alX * inv - this.vx[i]) * 4.2
-        ay += (alY * inv - this.vy[i]) * 4.2
-        ax += sepX * 260 * u * (1 + 2 * pn)
-        ay += sepY * 260 * u * (1 + 2 * pn)
-        ax += cohX * inv * 0.05 * cohBoost
-        ay += cohY * inv * 0.05 * cohBoost
+        ax += (alX * inv - this.vx[i]) * prof.align
+        ay += (alY * inv - this.vy[i]) * prof.align
+        ax += sepX * prof.separation * u * (1 + 2 * pn)
+        ay += sepY * prof.separation * u * (1 + 2 * pn)
+        ax += cohX * inv * prof.cohesion * cohBoost
+        ay += cohY * inv * prof.cohesion * cohBoost
       }
 
       // flee an active strike
       if (this.strikeT < 0.5) {
         const dx = this.px[i] - this.strikeX
         const dy = this.py[i] - this.strikeY
-        const dist = Math.hypot(dx, dy) + 1
+        const dist = Math.sqrt(dx * dx + dy * dy) + 1
         const fall = Math.exp(-dist / (240 * u))
         ax += (dx / dist) * 2600 * u * d.scatter * fall
         ay += (dy / dist) * 2600 * u * d.scatter * fall
@@ -233,7 +326,7 @@ export class Flock {
       {
         const dx = anchorX - this.px[i]
         const dy = anchorY - this.py[i]
-        const dist = Math.hypot(dx, dy)
+        const dist = Math.sqrt(dx * dx + dy * dy)
         if (dist > freeR) {
           const t = Math.min(1, (dist - freeR) / rampR)
           const f = 260 * u * t * t
@@ -245,18 +338,18 @@ export class Flock {
       if (landBase === 0 && this.py[i] > groundY - 30 * u) ay -= (this.py[i] - (groundY - 30 * u)) * 6
 
       // gust field + per-bird noise (prevents crystallization)
-      ax += Math.sin(time * 0.21 + this.py[i] * 0.0021) * 30 * d.wind
-      ay += Math.cos(time * 0.17 + this.px[i] * 0.0016) * 14 * d.wind
-      ax += (Math.sin(time * 5.1 + i * 1.7) + Math.sin(time * 3.3 + i * 0.71)) * 40 * u
-      ay += (Math.cos(time * 4.7 + i * 2.3) + Math.cos(time * 3.9 + i * 1.13)) * 40 * u
+      ax += fsin(time * 0.21 + this.py[i] * 0.0021) * gustAx
+      ay += fcos(time * 0.17 + this.px[i] * 0.0016) * gustAy
+      ax += (fsin(time * 5.1 + i * 1.7) + fsin(time * 3.3 + i * 0.71)) * jitter * prof.noise
+      ay += (fcos(time * 4.7 + i * 2.3) + fcos(time * 3.9 + i * 1.13)) * jitter * prof.noise
 
       this.vx[i] += ax * dt
       this.vy[i] += ay * dt
 
       // narrow speed band: relax toward cruise (τ = 0.5 s), panic surges it
-      const sp = Math.hypot(this.vx[i], this.vy[i]) || 1
+      const sp = Math.sqrt(this.vx[i] * this.vx[i] + this.vy[i] * this.vy[i]) || 1
       const cruise = cruiseBase * (1 + 0.45 * pn)
-      let k = 1 + ((cruise - sp) / sp) * Math.min(1, dt / 0.5)
+      let k = 1 + ((cruise - sp) / sp) * relax
       const capped = Math.min(maxSp * (1 + 0.4 * pn), Math.max(minSp, sp * k))
       k = capped / sp
       this.vx[i] *= k
@@ -284,16 +377,15 @@ export class Flock {
     }
   }
 
-  draw(g: CanvasRenderingContext2D, w: number, h: number, stops: string[], d: FlockDrive): void {
+  draw(g: CanvasRenderingContext2D, w: number, h: number, stops: string[], _d: FlockDrive): void {
     const u = h / 1080
-    // ground hairline — the stage the silence narrative lands on
-    g.globalAlpha = 0.4
-    g.strokeStyle = stops[2]
-    g.lineWidth = Math.max(1, u)
-    g.beginPath()
-    g.moveTo(0, d.horizonY)
-    g.lineTo(w, d.horizonY)
-    g.stroke()
+    // Past ~12k birds the per-bird fillRect call overhead dominates the frame,
+    // so the flock is splatted straight into a pixel buffer instead — the cost
+    // becomes the buffer clear (constant) plus a few writes per bird.
+    if (this.n >= SPLAT_MIN) {
+      this.drawSplat(g, w, h, stops)
+      return
+    }
 
     // birds are dots — density does the drawing, overlap makes the billows
     const s = Math.max(1.5, 2.2 * u)
@@ -311,4 +403,60 @@ export class Flock {
     }
     g.globalAlpha = 1
   }
+
+  private drawSplat(g: CanvasRenderingContext2D, w: number, h: number, stops: string[]): void {
+    const u = h / 1080
+    const W = Math.max(1, Math.floor(w))
+    const H = Math.max(1, Math.floor(h))
+    if (!this.splatCanvas || this.splatW !== W || this.splatH !== H) {
+      const c = document.createElement('canvas')
+      c.width = W
+      c.height = H
+      this.splatCanvas = c
+      this.splatCtx = c.getContext('2d')!
+      this.splatImg = this.splatCtx.createImageData(W, H)
+      this.splatBuf = new Uint32Array(this.splatImg.data.buffer)
+      this.splatW = W
+      this.splatH = H
+    }
+    const buf = this.splatBuf!
+    buf.fill(0)
+
+    const fly = abgr(stops[4], 0.78)
+    const perch = abgr(stops[4], 0.92)
+    const block = Math.max(1, Math.min(3, Math.round(2.2 * u)))
+
+    for (let i = 0; i < this.n; i++) {
+      const perched = this.state[i] === PERCHED
+      const c = perched ? perch : fly
+      const bh = perched ? block + 1 : block
+      const x0 = (this.px[i] - block * 0.5) | 0
+      const y0 = (this.py[i] - bh * 0.5) | 0
+      for (let dy = 0; dy < bh; dy++) {
+        const y = y0 + dy
+        if (y < 0 || y >= H) continue
+        const row = y * W
+        for (let dx = 0; dx < block; dx++) {
+          const x = x0 + dx
+          if (x < 0 || x >= W) continue
+          buf[row + x] = c
+        }
+      }
+    }
+    this.splatCtx!.putImageData(this.splatImg!, 0, 0)
+    g.globalAlpha = 1
+    g.drawImage(this.splatCanvas!, 0, 0)
+  }
+}
+
+const SPLAT_MIN = 12_000
+
+/** #rrggbb + alpha → the little-endian 0xAABBGGRR word an ImageData wants. */
+function abgr(hex: string, alpha: number): number {
+  const v = parseInt(hex.slice(1), 16)
+  const r = (v >> 16) & 255
+  const gg = (v >> 8) & 255
+  const b = v & 255
+  const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+  return ((a << 24) | (b << 16) | (gg << 8) | r) >>> 0
 }
