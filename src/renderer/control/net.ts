@@ -17,13 +17,21 @@ export interface Telemetry {
   bands: number[]
   onset: number
   spectrum: number[]
+  story: { act: number; total: number; name: string; t: number } | null
 }
 
 class ControlNet {
   state: ParamState = defaultState()
   presets: string[] = []
   devices: { audio: MediaDeviceLite[]; video: MediaDeviceLite[] } = { audio: [], video: [] }
-  telemetry: Telemetry = { fps: 0, level: 0, bands: new Array(8).fill(0), onset: 0, spectrum: [] }
+  telemetry: Telemetry = {
+    fps: 0,
+    level: 0,
+    bands: new Array(8).fill(0),
+    onset: 0,
+    spectrum: [],
+    story: null
+  }
   connected = false
   port: string
 
@@ -140,7 +148,8 @@ class ControlNet {
           level: msg.level,
           bands: msg.bands,
           onset: msg.onset,
-          spectrum: msg.spectrum ?? []
+          spectrum: msg.spectrum ?? [],
+          story: msg.story ?? null
         }
         this.telemetryVersion++
         for (const l of this.telemetryListeners) l()

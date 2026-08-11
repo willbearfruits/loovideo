@@ -23,6 +23,9 @@ export interface FlockDrive {
   silence: number
   horizonY: number
   kind: FlockKind
+  /** roost anchors (screen space) — tree tips; when present, landing birds
+   * settle into the branches instead of onto the ground line */
+  perches?: { x: number; y: number }[]
 }
 
 /**
@@ -337,6 +340,14 @@ export class Flock {
       // keep off the ground while flying (unless landing narrative is on)
       if (landBase === 0 && this.py[i] > groundY - 30 * u) ay -= (this.py[i] - (groundY - 30 * u)) * 6
 
+      // roosting pull: when the trees offer tips, each landing bird flies to
+      // its assigned branch instead of drifting for the ground line
+      if (landBase > 0 && d.perches && d.perches.length > 0) {
+        const tgt = d.perches[i % d.perches.length]
+        ax += (tgt.x - this.px[i]) * 1.1
+        ay += (tgt.y - this.py[i]) * 1.5
+      }
+
       // gust field + per-bird noise (prevents crystallization)
       ax += fsin(time * 0.21 + this.py[i] * 0.0021) * gustAx
       ay += fcos(time * 0.17 + this.px[i] * 0.0016) * gustAy
@@ -358,16 +369,34 @@ export class Flock {
       this.px[i] += this.vx[i] * dt
       this.py[i] += this.vy[i] * dt
 
-      // landing: base trickle + social cascade (the roost funnel)
-      if (landBase > 0 && this.py[i] > groundY - 60 * u) {
+      // landing: base trickle + social cascade (the roost funnel). With tree
+      // perches on offer the bird settles onto its branch; otherwise, ground.
+      if (landBase > 0) {
         const social = perchedNear > 0 ? 1.4 * Math.min(1, perchedNear / 7) : 0
-        if (Math.random() < dt * (landBase * (0.4 + this.rnd[i]) + social)) {
-          this.state[i] = PERCHED
-          this.py[i] = groundY
-          this.vx[i] = 0
-          this.vy[i] = 0
-          this.panic[i] = 0
-          this.takeoff[i] = 0.1 + this.rnd[i] * 2.6
+        const P = d.perches
+        if (P && P.length > 0) {
+          const tgt = P[i % P.length]
+          const dx = tgt.x - this.px[i]
+          const dy = tgt.y - this.py[i]
+          const r = 13 * u
+          if (dx * dx + dy * dy < r * r && Math.random() < dt * (landBase * 1.8 + social + 0.6)) {
+            this.state[i] = PERCHED
+            this.px[i] = tgt.x
+            this.py[i] = tgt.y
+            this.vx[i] = 0
+            this.vy[i] = 0
+            this.panic[i] = 0
+            this.takeoff[i] = 0.1 + this.rnd[i] * 2.6
+          }
+        } else if (this.py[i] > groundY - 60 * u) {
+          if (Math.random() < dt * (landBase * (0.4 + this.rnd[i]) + social)) {
+            this.state[i] = PERCHED
+            this.py[i] = groundY
+            this.vx[i] = 0
+            this.vy[i] = 0
+            this.panic[i] = 0
+            this.takeoff[i] = 0.1 + this.rnd[i] * 2.6
+          }
         }
       }
       if (this.py[i] > groundY) {

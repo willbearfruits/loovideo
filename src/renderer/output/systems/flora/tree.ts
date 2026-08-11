@@ -974,6 +974,32 @@ export class Tree {
     return this.liveCount
   }
 
+  /** Trunk foot, world coordinates — the camera's 'seed' focus. */
+  get origin(): { x: number; y: number } {
+    return { x: this.originX, y: this.rootY }
+  }
+
+  /** A falling leaf to follow, or null — the camera's 'leaf' focus. */
+  trackFalling(): { x: number; y: number } | null {
+    const L = this.falling[0]
+    return L ? { x: L.x, y: L.y } : null
+  }
+
+  /**
+   * Up to n living tip positions (swayed, world space) for birds to roost on.
+   * Sampled with a stride so the anchors spread across the whole canopy.
+   */
+  perchTips(out: { x: number; y: number }[], n: number): void {
+    if (this.nNodes < 40) return
+    const step = Math.max(1, Math.ceil(this.tipCount / Math.max(1, n)))
+    let seen = 0
+    for (let i = 1; i < this.nNodes && out.length < n; i++) {
+      if (!this.alive[i] || this.childCount[i] !== 0 || this.depth[i] < 5) continue
+      if (seen++ % step !== 0) continue
+      out.push({ x: this.swayX[i], y: this.swayY[i] })
+    }
+  }
+
   private pickTip(): number {
     if (this.nNodes < 10) return -1
     for (let t = 0; t < 12; t++) {

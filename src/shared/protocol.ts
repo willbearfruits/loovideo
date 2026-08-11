@@ -33,7 +33,15 @@ export type ClientMessage =
   | { t: 'preset.delete'; name: string }
   | { t: 'preset.cycle'; dir: number }
   | { t: 'window'; fullscreen?: boolean; display?: number }
-  | { t: 'telemetry'; fps: number; level: number; bands: number[]; onset: number; spectrum?: number[] }
+  | {
+      t: 'telemetry'
+      fps: number
+      level: number
+      bands: number[]
+      onset: number
+      spectrum?: number[]
+      story?: { act: number; total: number; name: string; t: number } | null
+    }
   | { t: 'devices'; audio: MediaDeviceLite[]; video: MediaDeviceLite[] }
   | { t: 'state.request' }
 
@@ -46,7 +54,15 @@ export type ServerMessage =
   | { t: 'device'; kind: 'audio' | 'video'; deviceId: string | null }
   | { t: 'quality'; quality: QualityState }
   | { t: 'presets'; names: string[] }
-  | { t: 'telemetry'; fps: number; level: number; bands: number[]; onset: number; spectrum?: number[] }
+  | {
+      t: 'telemetry'
+      fps: number
+      level: number
+      bands: number[]
+      onset: number
+      spectrum?: number[]
+      story?: { act: number; total: number; name: string; t: number } | null
+    }
   | { t: 'devices'; audio: MediaDeviceLite[]; video: MediaDeviceLite[] }
 
 export function parseMessage<T>(raw: unknown): T | null {

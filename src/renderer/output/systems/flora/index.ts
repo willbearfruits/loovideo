@@ -14,6 +14,7 @@ import type { AudioFrame } from '../../audio'
 import { Params, applyBlend, type SystemCtx, type VisualSystem, type LayerBlend } from '../types'
 import { Flock, flockCountScale, type FlockDrive, type FlockKind } from './flock'
 import { Tree, type TreeDrive, type TreeKind } from './tree'
+import { FloraCamera, type CamTarget } from './camera'
 import { Stars } from './stars'
 import { Scenery, dayCycle, type SceneKind, type SceneryDrive } from './scenery'
 import { Fauna, type FaunaDrive } from './fauna'
@@ -56,6 +57,11 @@ export class FloraSystem implements VisualSystem {
   private active = false
   private overlay = false
   private fitScale = 1
+  private cam = new FloraCamera()
+  private ffX = new Float32Array(0)
+  private ffY = new Float32Array(0)
+  private ffP = new Float32Array(0)
+  private perchScratch: { x: number; y: number }[] = []
 
   constructor() {
     this.texture.colorSpace = THREE.SRGBColorSpace
@@ -154,7 +160,8 @@ export class FloraSystem implements VisualSystem {
     // --- back to front: sky, hills, ground, built structures ---------------
     if (wantStars) {
       this.stars.update(dt, time, w, h, density, stops, drive)
-      this.stars.draw(g, w, h, time, stops, drive)
+      // scenery skies own the sun/moon arc; stars only bring the moon on bare
+      this.stars.draw(g, w, h, time, stops, drive, scene === 'bare')
     }
     this.scenery.drawBack(g, w, h, scene, stops, drive)
 
@@ -269,15 +276,60 @@ export class FloraSystem implements VisualSystem {
       this.fitScale += (eff - this.fitScale) * Math.min(1, dt * 1.6)
       const cxTree = Number.isFinite(minX) ? (minX + maxX) / 2 : w / 2
 
+      // the camera sits on top of the auto-frame: same fit, but the story can
+      // choose the focus — wide, seed push-in, a slow drift, or one leaf down
+      const mode = this.ctx.story.on ? this.ctx.story.cam : 'auto'
+      const camT: CamTarget = { fx: cxTree, fy: horizonY, zoom: 1 }
+      let anchorY = horizonY
+      if (mode === 'drift') {
+        camT.fx += this.cam.driftOffset(Math.max(80, (maxX - minX) * 0.5))
+        camT.zoom = 1.06
+      } else if (mode === 'seed' && this.trees[0]) {
+        const o = this.trees[0].origin
+        camT.fx = o.x
+        camT.fy = o.y - h * 0.04
+        camT.zoom = 4
+        anchorY = h * 0.6
+      } else if (mode === 'leaf') {
+        let leaf: { x: number; y: number } | null = null
+        for (const t of this.trees) {
+          leaf = t.trackFalling()
+          if (leaf) break
+        }
+        if (leaf) {
+          camT.fx = leaf.x
+          camT.fy = leaf.y
+          camT.zoom = 2.6
+          anchorY = h * 0.5
+        }
+      }
+      this.cam.update(dt, camT, drive.onset)
+
       g.save()
-      g.translate(w / 2, horizonY)
-      g.scale(this.fitScale, this.fitScale)
-      g.translate(-cxTree, -horizonY)
+      this.cam.apply(g, w / 2, anchorY, this.fitScale)
       for (let i = 0; i < this.trees.length; i++) {
         const fade = this.treeFade[i] > 0 ? 1 - this.treeFade[i] / SUCCESSION_FADE : 1
         this.trees[i].draw(g, w, h, stops, drive, this.fitScale, Math.max(0, fade))
       }
+      this.drawFireflies(g, dt, time, w, h, stops, drive)
       g.restore()
+
+      // roosting: living tree tips become the flock's perches, transformed to
+      // the flock's screen space through the same camera
+      this.perchScratch.length = 0
+      if (wantFlock && this.trees.length > 0 && drive.silence > 0.25) {
+        const per = Math.max(6, Math.floor(48 / this.trees.length))
+        const world: { x: number; y: number }[] = []
+        for (const t of this.trees) t.perchTips(world, world.length + per)
+        const Z = this.fitScale * this.cam.currentZoom
+        for (const a of world) {
+          this.perchScratch.push({
+            x: w / 2 + (a.x - this.cam.focusX) * Z,
+            y: anchorY + (a.y - this.cam.focusY) * Z
+          })
+        }
+      }
+      drive.perches = this.perchScratch.length > 0 ? this.perchScratch : undefined
     }
 
     // --- livestock: in front of the field, behind nothing -------------------
@@ -315,6 +367,51 @@ export class FloraSystem implements VisualSystem {
   }
 
   /** (Re)seed one slot of the grove — used at build time and by succession. */
+  /**
+   * Fireflies: only in the twilight window, only outside late autumn/winter.
+   * Drawn inside the camera transform, so they inhabit the grove.
+   */
+  private drawFireflies(
+    g: CanvasRenderingContext2D,
+    dt: number,
+    time: number,
+    w: number,
+    h: number,
+    stops: string[],
+    drive: FlockDrive & { daytime: number; season: number }
+  ): void {
+    const day = dayCycle(drive.daytime)
+    const dusk = Math.max(0, 1 - Math.abs(day.light - 0.16) / 0.16)
+    if (dusk < 0.03 || drive.season > 0.7) return
+    const u = h / 1080
+    const N = 110
+    if (this.ffX.length !== N) {
+      this.ffX = new Float32Array(N)
+      this.ffY = new Float32Array(N)
+      this.ffP = new Float32Array(N)
+      for (let i = 0; i < N; i++) {
+        this.ffX[i] = Math.random() * w
+        this.ffY[i] = drive.horizonY - Math.random() * h * 0.32
+        this.ffP[i] = Math.random() * Math.PI * 2
+      }
+    }
+    g.fillStyle = stops[4]
+    for (let i = 0; i < N; i++) {
+      this.ffX[i] += Math.sin(time * 0.4 + this.ffP[i] * 3) * 14 * u * dt
+      this.ffY[i] += Math.cos(time * 0.31 + this.ffP[i] * 2) * 9 * u * dt
+      // slow blink, each on its own clock, lifted by treble
+      const blink = Math.max(0, Math.sin(time * (1.1 + (i % 7) * 0.23) + this.ffP[i]))
+      const a = dusk * Math.pow(blink, 3) * (0.5 + drive.treble * 0.6) * (1 - drive.silence * 0.3)
+      if (a < 0.02) continue
+      g.globalAlpha = a
+      const s = 2.2 * u
+      g.fillRect(this.ffX[i] - s / 2, this.ffY[i] - s / 2, s, s)
+      g.globalAlpha = a * 0.28
+      g.fillRect(this.ffX[i] - s * 1.4, this.ffY[i] - s * 1.4, s * 2.8, s * 2.8)
+    }
+    g.globalAlpha = 1
+  }
+
   /** A volunteer seedling: random ground, small stature, its own species. */
   private plantSprout(t: Tree): void {
     const s = this.treeSpec

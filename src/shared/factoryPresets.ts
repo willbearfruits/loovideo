@@ -343,6 +343,24 @@ export const FACTORY_PRESETS: Record<string, PresetPatch> = {
     ]
   },
 
+  // The narrative: grain → sprout → tree → grove → forest alive → storm →
+  // autumn → winter → the last leaf becomes the seed. Advanced by cumulative
+  // musical energy; ←/→ or Story: Next Act to drive it by hand.
+  'THE CYCLE': {
+    system: 'flora',
+    values: {
+      'story.on': true,
+      'flora.mode': 'tree',
+      'flora.palette': 'mono',
+      'flora.horizon': 0.85,
+      'master.fade': 2.5,
+      'fx.bloom': 0.5,
+      'fx.grain': 0.07,
+      'fx.vignette': 0.3
+    },
+    routes: []
+  },
+
   // Everything flora has, at once: night sky behind, a grove growing in it,
   // a full murmuration through the branches.
   'SKY GARDEN': {

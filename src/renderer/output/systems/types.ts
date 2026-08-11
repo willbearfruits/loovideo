@@ -44,10 +44,19 @@ export class Params {
   }
 }
 
+/** Live directives from the story director, mutated in place by the engine. */
+export interface StoryCtx {
+  on: boolean
+  /** camera directive for flora: wide auto-frame, seed push-in, Ken Burns
+   * drift, or following a falling leaf down */
+  cam: 'auto' | 'seed' | 'drift' | 'leaf'
+}
+
 export interface SystemCtx {
   renderer: THREE.WebGLRenderer
   webcam: Webcam
   quality: () => QualityState & QualityTier
+  story: StoryCtx
   /**
    * Push a parameter change back to the hub. For momentary controls: the UI
    * sets a flag, the system acts on the rising edge and clears it here, so the

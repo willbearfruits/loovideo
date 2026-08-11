@@ -66,6 +66,9 @@ export const PARAMS: ParamDef[] = [
   n('master.brightness', 'Brightness', 0, 1, 1, 'master'),
   n('master.speed', 'Speed', 0, 3, 1, 'master'),
   n('master.fade', 'Scene Fade (s)', 0, 8, 1.6, 'master', false),
+  b('story.on', 'Story: The Cycle', false, 'master'),
+  b('story.skip', 'Story: Next Act', false, 'master'),
+  n('story.pace', 'Story Pace', 0.25, 4, 1, 'master', false),
   b('master.blackout', 'Blackout', false, 'master'),
   b('master.hud', 'HUD', false, 'master'),
 

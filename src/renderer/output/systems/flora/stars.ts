@@ -108,7 +108,17 @@ export class Stars {
     }
   }
 
-  draw(g: CanvasRenderingContext2D, w: number, h: number, time: number, stops: string[], d: StarsDrive): void {
+  draw(
+    g: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    time: number,
+    stops: string[],
+    d: StarsDrive,
+    /** false when the scenery sky already draws the sun/moon arc — two moons
+     * in one sky was a real bug */
+    drawMoon = true
+  ): void {
     const u = h / 1080
 
     // long-exposure milky way, developing only in silence
@@ -142,18 +152,20 @@ export class Stars {
     }
 
     // moon: bright disc with an offset bite of background — a dry crescent
-    const mx = w * 0.74
-    const my = h * 0.22
-    const mr = h * 0.048
-    g.globalAlpha = 0.95
-    g.fillStyle = stops[3]
-    g.beginPath()
-    g.arc(mx, my, mr, 0, Math.PI * 2)
-    g.fill()
-    g.fillStyle = stops[0]
-    g.beginPath()
-    g.arc(mx - mr * 0.42, my - mr * 0.18, mr * 0.92, 0, Math.PI * 2)
-    g.fill()
+    if (drawMoon) {
+      const mx = w * 0.74
+      const my = h * 0.22
+      const mr = h * 0.048
+      g.globalAlpha = 0.95
+      g.fillStyle = stops[3]
+      g.beginPath()
+      g.arc(mx, my, mr, 0, Math.PI * 2)
+      g.fill()
+      g.fillStyle = stops[0]
+      g.beginPath()
+      g.arc(mx - mr * 0.42, my - mr * 0.18, mr * 0.92, 0, Math.PI * 2)
+      g.fill()
+    }
 
     // shooting stars: gradient streak + bright head
     for (const s of this.shooters) {

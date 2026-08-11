@@ -442,6 +442,11 @@ export function HeaderMeters(): JSX.Element {
   const t = useTelemetry()
   return (
     <div className="meta">
+      {t.story && (
+        <span style={{ color: 'var(--accent2)' }}>
+          ◇ {t.story.name} {t.story.act}/{t.story.total} · {Math.round(t.story.t * 100)}%
+        </span>
+      )}
       <span>{t.fps} fps</span>
       <div className="level-mini">
         <div style={{ width: `${Math.min(1, t.level) * 100}%` }} />

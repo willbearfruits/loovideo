@@ -18,7 +18,8 @@ import { Webcam } from './webcam'
 import { GradeShader } from './fx'
 import { SceneFade } from './fade'
 import { LayersPass } from './layers'
-import { Params, type LayerBlend, type VisualSystem } from './systems/types'
+import { Params, type LayerBlend, type StoryCtx, type VisualSystem } from './systems/types'
+import { Story } from './story'
 import { CharactersSystem } from './systems/characters'
 import { ParticlesSystem } from './systems/particles'
 import { FloraSystem } from './systems/flora'
@@ -56,6 +57,8 @@ export class Engine {
   private seenEpoch = -1
   private flashStamps: number[] = []
   private prevFlashRaw = 0
+  private storyCtx: StoryCtx = { on: false, cam: 'auto' }
+  private story!: Story
 
   constructor(
     private net: OutputNet,
@@ -91,8 +94,10 @@ export class Engine {
       renderer: this.renderer,
       webcam: this.webcam,
       quality: () => ({ ...this.net.state.quality, ...QUALITY_TIERS[this.net.state.quality.preset] }),
+      story: this.storyCtx,
       setParam: (id: string, value: ParamValue) => this.net.send({ t: 'set', id, value })
     }
+    this.story = new Story(this.net, this.storyCtx)
     this.systems = {
       chars: new CharactersSystem(),
       parts: new ParticlesSystem(),
@@ -248,6 +253,22 @@ export class Engine {
     for (let i = 0; i < 4; i++)
       sources[`lfo${i}` as keyof ModSources] = lfoValue(st.lfos[i], this.scaledTime)
     this.params.eff = computeEffective(st.values, st.routes, sources)
+
+    // story director: the narrative is a slow automation over the same spine.
+    // It overrides its continuous drives AFTER modulation, so the world's day
+    // and season belong to the story while it runs; user faders still own
+    // everything the current act doesn't drive.
+    this.story.frame(dt, audioFrame, st.values)
+    const so = this.story.overrides
+    if (this.storyCtx.on) {
+      if (so.daytime !== undefined) this.params.eff['flora.daytime'] = so.daytime
+      if (so.season !== undefined) this.params.eff['flora.season'] = so.season
+      if (so.windAdd > 0.001)
+        this.params.eff['flora.wind'] = Math.min(
+          2,
+          (this.params.eff['flora.wind'] as number) + so.windAdd
+        )
+    }
     const p = this.params
 
     // layer stack: base system + any faded-in overlays
@@ -274,7 +295,8 @@ export class Engine {
     this.rgbShift.uniforms['angle'].value = 0.6 + Math.sin(this.scaledTime * 0.31) * 0.5
 
     const gu = this.grade.uniforms as typeof GradeShader.uniforms
-    gu.uBrightness.value = p.bool('master.blackout') ? 0 : p.num('master.brightness')
+    gu.uBrightness.value =
+      (p.bool('master.blackout') ? 0 : p.num('master.brightness')) * this.story.overrides.brightnessMul
     gu.uVignette.value = p.num('fx.vignette')
     gu.uGrain.value = p.num('fx.grain')
     gu.uPixelate.value = p.num('fx.pixelate')
@@ -303,7 +325,8 @@ export class Engine {
         level: round3(audioFrame.level),
         bands: Array.from(audioFrame.bands, round3),
         onset: round3(audioFrame.onset),
-        spectrum: Array.from(audioFrame.spectrum, round3)
+        spectrum: Array.from(audioFrame.spectrum, round3),
+        story: this.story.info
       })
       this.updateHud(audioFrame.level)
     }
