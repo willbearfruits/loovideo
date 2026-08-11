@@ -250,6 +250,98 @@ export const FACTORY_PRESETS: Record<string, PresetPatch> = {
     ]
   },
 
+  // The luminous-ink references: single trees, white on black, tight bloom.
+  // A young sapling with oversized outlined leaves — the opening image.
+  LUMEN: {
+    system: 'flora',
+    values: {
+      'flora.mode': 'tree',
+      'flora.palette': 'mono',
+      'flora.treeKind': 'sapling',
+      'flora.trees': 1,
+      'flora.endless': false,
+      'flora.leaves': 0.85,
+      'flora.season': 0.3,
+      'flora.wind': 0.45,
+      'flora.vigor': 1.1,
+      'flora.horizon': 0.88,
+      'fx.bloom': 0.55,
+      'fx.grain': 0.06,
+      'fx.vignette': 0.3
+    },
+    routes: [{ id: 'r1', source: 'band0', target: 'flora.wind', depth: 0.3 }]
+  },
+
+  // Weeping willow: strand curtains combed by the wind.
+  'WILLOW VEIL': {
+    system: 'flora',
+    values: {
+      'flora.mode': 'tree',
+      'flora.palette': 'mono',
+      'flora.treeKind': 'willow',
+      'flora.trees': 1,
+      'flora.endless': false,
+      'flora.leaves': 0.7,
+      'flora.season': 0.3,
+      'flora.wind': 0.8,
+      'flora.vigor': 1.2,
+      'flora.horizon': 0.88,
+      'fx.bloom': 0.5,
+      'fx.grain': 0.07,
+      'fx.vignette': 0.32
+    },
+    routes: [
+      { id: 'r1', source: 'band0', target: 'flora.wind', depth: 0.5 },
+      { id: 'r2', source: 'band5', target: 'flora.wind', depth: 0.2 }
+    ]
+  },
+
+  // S-trunk fiber bundle, stepped foliage pads, the outlined vessel.
+  BONSAI: {
+    system: 'flora',
+    values: {
+      'flora.mode': 'tree',
+      'flora.palette': 'mono',
+      'flora.treeKind': 'bonsai',
+      'flora.trees': 1,
+      'flora.endless': false,
+      'flora.leaves': 0.8,
+      'flora.season': 0.3,
+      'flora.wind': 0.35,
+      'flora.vigor': 1,
+      'flora.horizon': 0.8,
+      'fx.bloom': 0.45,
+      'fx.grain': 0.06,
+      'fx.vignette': 0.34
+    },
+    routes: [{ id: 'r1', source: 'level', target: 'flora.vigor', depth: 0.3 }]
+  },
+
+  // Broad dome, fiber trunk, aerial roots creeping to the ground over minutes.
+  BANYAN: {
+    system: 'flora',
+    values: {
+      'flora.mode': 'tree',
+      'flora.palette': 'mono',
+      'flora.treeKind': 'banyan',
+      'flora.trees': 1,
+      'flora.endless': false,
+      'flora.density': 0.85,
+      'flora.leaves': 0.75,
+      'flora.season': 0.3,
+      'flora.wind': 0.5,
+      'flora.vigor': 1.3,
+      'flora.horizon': 0.86,
+      'fx.bloom': 0.32,
+      'fx.grain': 0.07,
+      'fx.vignette': 0.3
+    },
+    routes: [
+      { id: 'r1', source: 'band0', target: 'flora.wind', depth: 0.35 },
+      { id: 'r2', source: 'level', target: 'flora.vigor', depth: 0.3 }
+    ]
+  },
+
   // Everything flora has, at once: night sky behind, a grove growing in it,
   // a full murmuration through the branches.
   'SKY GARDEN': {

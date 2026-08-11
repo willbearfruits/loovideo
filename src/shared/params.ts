@@ -149,7 +149,7 @@ export const PARAMS: ParamDef[] = [
   // a landscape to put the living things in
   e('flora.scene', 'Landscape', ['bare', 'hills', 'farm'], 'bare', 'flora'),
   e('flora.flockKind', 'Flock', ['starlings', 'geese', 'midges'], 'starlings', 'flora'),
-  e('flora.treeKind', 'Species', ['mixed', 'oak', 'pine', 'willow', 'birch'], 'mixed', 'flora'),
+  e('flora.treeKind', 'Species', ['mixed', 'oak', 'pine', 'willow', 'birch', 'sapling', 'bonsai', 'banyan'], 'mixed', 'flora'),
   // momentary: the renderer clears it as soon as it starts the fell sequence
   b('flora.fell', 'FELL THE TREES', false, 'flora'),
   b('flora.addStars', '+ Sky', false, 'flora'),

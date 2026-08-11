@@ -22,7 +22,7 @@ just WebSocket clients of the same hub (`ws://127.0.0.1:7770`).
 | ------- | ---------- | ------ | ---------------------------------------------------------- |
 | `chars` | CHARACTERS | ✅     | glyph grid: noise flow, physarum swarm, de Jong attractor, zalgo rain, waveform bars, Lissajous phase scope, edge-aware webcam-ascii |
 | `parts` | PARTICLES  | ✅     | stateless GPU field, 60k–600k points: curl nebula, breathing shell, spiral galaxy, data lattice, curl filaments, torus — with soft/dot/ring/square/cross point shapes, edge sharpness, depth fade, twist, tilt and FOV |
-| `flora` | FLORA      | ✅     | murmuration up to 45k birds (silence lands them), an **endlessly growing** grove of up to 7 space-colonization trees, night sky — all three stackable in one frame |
+| `flora` | FLORA      | ✅     | murmuration up to 45k birds (silence lands them), an **endlessly growing** grove of up to 7 space-colonization trees in 7 species (incl. weeping willow with strand curtains, bonsai with S-fiber trunk + vessel, banyan with aerial roots), night sky — all three stackable in one frame. Luminous-ink rendering: halo + tapered cores, curved limbs, outlined leaf sprites |
 | images  | IMAGES     | 🔜     | early-Flash-style cutout animation                         |
 
 ## Layers — everything at once

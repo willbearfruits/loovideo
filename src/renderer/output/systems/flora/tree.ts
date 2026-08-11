@@ -18,6 +18,13 @@
 // Thickness: pipe model (Leonardo's rule, exponent 2) accumulated from tips.
 // Sway: per-node rotation accumulated down the parent chain (rigid trunk,
 // flexible tips, phase accruing along each branch → a traveling wave).
+//
+// Rendering is the "luminous ink" look: a wide dim halo under the structural
+// wood, bright cores whose brightness tapers from trunk to twig, limbs curved
+// through segment midpoints, leaves as stroked outline sprites, and species
+// appendages (willow strand curtains, banyan aerial roots, the bonsai vessel).
+
+import { getLeafSprites } from './leafsprites'
 
 export interface TreeDrive {
   wind: number
@@ -64,7 +71,7 @@ export function seasonLeaf(season: number): { size: number; stop: number; fall: 
   return { size: Math.max(0, 0.65 - t * 0.65), stop: 4, fall: 2.5 * (1 - t) }
 }
 
-export type TreeKind = 'oak' | 'pine' | 'willow' | 'birch'
+export type TreeKind = 'oak' | 'pine' | 'willow' | 'birch' | 'sapling' | 'bonsai' | 'banyan'
 
 /**
  * Species are the same space-colonization solver with a different crown
@@ -86,15 +93,33 @@ interface KindProfile {
   jitter: number
   /** attractor count multiplier */
   fill: number
-  /** leaf square size multiplier */
+  /** leaf sprite size multiplier */
   leaf: number
+  /** hanging strand curtains from the outer tips (weeping willow) */
+  strands?: boolean
+  /** aerial roots dropping from the major limbs to the ground (banyan) */
+  roots?: boolean
+  /** outlined vessel under the trunk foot (bonsai) */
+  pot?: boolean
+  /** seed the crown as k flattened pads instead of one ellipse (bonsai) */
+  pads?: number
+  /** trunk bootstrap follows an S-curve instead of climbing straight */
+  sCurve?: boolean
+  /** major limbs stroked as an offset fiber bundle, not one line */
+  fiber?: boolean
 }
 
 const KINDS: Record<TreeKind, KindProfile> = {
   oak: { rx: 1, ry: 1, cy: 0.46, tropism: -0.1, seg: 1, jitter: 0.24, fill: 1, leaf: 1 },
   pine: { rx: 0.5, ry: 1.5, cy: 0.55, tropism: -0.42, seg: 0.85, jitter: 0.12, fill: 1.15, leaf: 0.6 },
-  willow: { rx: 1.2, ry: 0.8, cy: 0.5, tropism: 0.3, seg: 1.05, jitter: 0.3, fill: 0.95, leaf: 1.25 },
-  birch: { rx: 0.62, ry: 1.25, cy: 0.5, tropism: -0.26, seg: 1.15, jitter: 0.18, fill: 0.7, leaf: 0.85 }
+  willow: { rx: 1.2, ry: 0.8, cy: 0.5, tropism: 0.3, seg: 1.05, jitter: 0.3, fill: 0.95, leaf: 1.25, strands: true },
+  birch: { rx: 0.62, ry: 1.25, cy: 0.5, tropism: -0.26, seg: 1.15, jitter: 0.18, fill: 0.7, leaf: 0.85 },
+  // a young tree: few long graceful limbs, oversized leaves at the tips
+  sapling: { rx: 0.85, ry: 0.95, cy: 0.5, tropism: -0.22, seg: 1.35, jitter: 0.1, fill: 0.42, leaf: 1.55 },
+  // S-curved fiber trunk, flattened foliage pads, an outlined vessel
+  bonsai: { rx: 0.95, ry: 0.5, cy: 0.34, tropism: -0.06, seg: 0.8, jitter: 0.34, fill: 1.05, leaf: 0.9, pads: 4, sCurve: true, pot: true, fiber: true },
+  // broad low dome on a massive base, aerial roots reaching for the ground
+  banyan: { rx: 1.55, ry: 0.72, cy: 0.42, tropism: -0.06, seg: 0.95, jitter: 0.26, fill: 1.25, leaf: 0.9, roots: true, fiber: true }
 }
 
 interface Leaf {
@@ -193,6 +218,9 @@ export class Tree {
   private minY = 0
   private maxY = 0
   private density = 0.6
+  private originX = 0
+  private rootY = 0
+  private treeScale = 1
 
   // scratch for grow(), sized to capacity and reused — allocating three
   // node-sized arrays per growth tick was the single biggest cost on a mature
@@ -257,28 +285,45 @@ export class Tree {
     const cy = horizonY - h * K.cy * scale
     const rx = Math.min(w * 0.34, h * 0.42) * scale * K.rx
     const ry = h * 0.3 * scale * K.ry
+    this.originX = cx
+    this.rootY = horizonY
+    this.treeScale = scale
     this.attrN = 0
     this.attrLeft = 0
     const count = Math.round((260 + density * 900) * K.fill)
     this.growAttrCapacity(count)
-    this.seedCrown(cx, cy, rx, ry, count)
+    if (K.pads && K.pads > 1) {
+      // bonsai: flattened foliage pads stepped up the S of the trunk, sides
+      // alternating — the cloud-layer silhouette rather than one dome
+      const pads = K.pads
+      const per = Math.max(40, Math.round(count / pads))
+      for (let j = 0; j < pads; j++) {
+        const side = j % 2 === 0 ? -1 : 1
+        const fx = cx + side * (0.3 + 0.55 * (j / pads)) * rx + (Math.random() - 0.5) * rx * 0.2
+        const fy = cy + ry * (0.75 - (j / (pads - 1)) * 1.7)
+        this.seedCrown(fx, fy, rx * 0.38, ry * 0.42, per)
+      }
+    } else {
+      this.seedCrown(cx, cy, rx, ry, count)
+    }
 
     this.minX = this.maxX = cx
     this.minY = this.maxY = horizonY
 
-    // root node at the ground line, then a trunk bootstrap: climb straight
-    // up (with a wander) until the crown's influence field can see the tip —
-    // without this the algorithm stalls before it ever starts
+    // root node at the ground line, then a trunk bootstrap: climb (straight,
+    // or along an S for bonsai) until the crown's influence field can see the
+    // tip — without this the algorithm stalls before it ever starts
     let tip = this.addNode(cx, horizonY, -1)
     const di = this.segLen * 6
     let guard = 200
+    let step = 0
     while (guard-- > 0 && tip >= 0) {
       if (this.nearestAttractorDist2(this.nodesX[tip], this.nodesY[tip]) < di * di) break
-      tip = this.addNode(
-        this.nodesX[tip] + (Math.random() - 0.5) * this.segLen * 0.35,
-        this.nodesY[tip] - this.segLen,
-        tip
-      )
+      step++
+      const xNext = K.sCurve
+        ? cx + Math.sin(step * 0.3) * h * 0.055 * scale
+        : this.nodesX[tip] + (Math.random() - 0.5) * this.segLen * 0.35
+      tip = this.addNode(xNext, this.nodesY[tip] - this.segLen, tip)
     }
   }
 
@@ -925,28 +970,33 @@ export class Tree {
     const u = h / 1080
     const onScreenSeg = this.segLen * fitScale
 
-    // branches, thick to thin; round caps hide the joints. Four stroke passes
-    // over the node list — no per-frame index arrays, no garbage.
+    const K = this.prof
+    if (K.pot) this.drawPot(g, h, stops, alpha)
+
     g.lineCap = 'round'
-    g.globalAlpha = 0.92 * alpha
+    g.lineJoin = 'round'
     const widths = [11 * u, 5.2 * u, 2.6 * u, 1.2 * u]
-    const cols = [stops[4], stops[4], stops[3], stops[3]]
     // structural branches are always drawn whole; the twig tiers get a segment
     // budget so a canopy that has been growing for an hour costs the same to
     // stroke as one that started ten minutes ago
     const budget = [Infinity, Infinity, 9000, 12000]
     const st = this.bucketStart
-    for (let b = 0; b < 4; b++) {
-      if (b === 3 && onScreenSeg <= 0.9) continue // finest tier is sub-pixel
+
+    // 1) halo: a wide, dim under-glow beneath the structural wood. This is
+    // what makes the trunk read as light rather than a line (fx.bloom then
+    // lifts it further on dark palettes). The alpha adapts to how much
+    // structural wood there is — a sapling gets a full halo, a banyan whose
+    // whole dome is thick limbs would otherwise wash out into glare.
+    const structN = Math.max(1, st[2] - st[0])
+    g.strokeStyle = stops[2]
+    g.globalAlpha = 0.16 * alpha * Math.min(1, 340 / structN)
+    for (let b = 0; b < 2; b++) {
       const from = st[b]
       const to = st[b + 1]
       if (to <= from) continue
-      const stride = Math.max(1, Math.ceil((to - from) / budget[b]))
-      // the caller's fit transform already scales stroke width — don't re-apply
-      g.lineWidth = widths[b]
-      g.strokeStyle = cols[b]
+      g.lineWidth = widths[b] * 2.8
       g.beginPath()
-      for (let k = from; k < to; k += stride) {
+      for (let k = from; k < to; k++) {
         const i = this.order[k]
         const p = this.parent[i]
         g.moveTo(this.swayX[p], this.swayY[p])
@@ -955,47 +1005,249 @@ export class Tree {
       g.stroke()
     }
 
-    // leaves at the tips once the tree is established; flicker with treble.
-    // Capped by a stride so a huge canopy does not spend the frame on foliage.
+    // 2) cores: brightness tapers from white-hot trunk to grey twig, and limbs
+    // curve through segment midpoints (control point = the shared node), so
+    // chains read as drawn strokes instead of jointed segments.
+    const coreCols = [stops[4], stops[4], stops[3], stops[3]]
+    const coreAlpha = [0.98, 0.9, 0.72, 0.5]
+    for (let b = 0; b < 4; b++) {
+      if (b === 3 && onScreenSeg <= 0.9) continue // finest tier is sub-pixel
+      const from = st[b]
+      const to = st[b + 1]
+      if (to <= from) continue
+      const stride = Math.max(1, Math.ceil((to - from) / budget[b]))
+      const curved = stride === 1 && b < 3
+      g.globalAlpha = coreAlpha[b] * alpha
+      g.strokeStyle = coreCols[b]
+
+      if (b === 0 && K.fiber) {
+        // fiber bundle: three offset strands instead of one heavy line — the
+        // twisted-trunk look of the bonsai / banyan references
+        for (const off of [-0.34, 0, 0.34]) {
+          const o = widths[0] * off
+          g.lineWidth = widths[0] * (off === 0 ? 0.5 : 0.4)
+          g.globalAlpha = (off === 0 ? 0.98 : 0.8) * alpha
+          g.beginPath()
+          for (let k = from; k < to; k++) {
+            const i = this.order[k]
+            const p = this.parent[i]
+            const dx = this.swayX[i] - this.swayX[p]
+            const dy = this.swayY[i] - this.swayY[p]
+            const inv = 1 / (Math.hypot(dx, dy) || 1)
+            const nx = -dy * inv * o
+            const ny = dx * inv * o
+            g.moveTo(this.swayX[p] + nx, this.swayY[p] + ny)
+            g.lineTo(this.swayX[i] + nx, this.swayY[i] + ny)
+          }
+          g.stroke()
+        }
+        continue
+      }
+
+      // the caller's fit transform already scales stroke width — don't re-apply
+      g.lineWidth = widths[b]
+      g.beginPath()
+      for (let k = from; k < to; k += stride) {
+        const i = this.order[k]
+        const p = this.parent[i]
+        const gp = p >= 0 ? this.parent[p] : -1
+        if (!curved || gp < 0) {
+          g.moveTo(this.swayX[p], this.swayY[p])
+          g.lineTo(this.swayX[i], this.swayY[i])
+        } else {
+          g.moveTo((this.swayX[gp] + this.swayX[p]) / 2, (this.swayY[gp] + this.swayY[p]) / 2)
+          g.quadraticCurveTo(
+            this.swayX[p],
+            this.swayY[p],
+            (this.swayX[p] + this.swayX[i]) / 2,
+            (this.swayY[p] + this.swayY[i]) / 2
+          )
+          if (this.childCount[i] === 0) g.lineTo(this.swayX[i], this.swayY[i])
+        }
+      }
+      g.stroke()
+    }
+
+    if (K.roots) this.drawAerialRoots(g, h, stops, alpha)
+    if (K.strands) this.drawStrands(g, h, stops, d, alpha, onScreenSeg)
+
+    // leaves: stroked outline sprites at the tips, oriented off the twig they
+    // grow from, fluttering with treble. Capped by a stride so a huge canopy
+    // does not spend the frame on foliage.
     const season = seasonLeaf(d.season)
     if (this.nNodes > 40 && onScreenSeg > 1.4 && d.leaves > 0.01 && season.size > 0.01) {
       // A leaf swells with the age of the tip carrying it, so foliage fills in
       // behind the growing frontier instead of the canopy appearing whole —
       // and a freshly regrown tree is visibly bare for a while.
-      const base = 2.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3) * season.size
+      const spr = getLeafSprites(stops[season.stop])
+      const base = 5.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3) * season.size
       const mature = 6 // SECONDS for a leaf to reach full size
-      g.fillStyle = stops[season.stop]
       const budget = 4000
       const step = Math.max(1, Math.ceil(this.tipCount / budget))
+      const TWO_PI = Math.PI * 2
       let seen = 0
       for (let i = 1; i < this.nNodes; i++) {
         if (!this.alive[i] || this.childCount[i] !== 0 || this.depth[i] < 4) continue
         if (seen++ % step !== 0) continue
         const age = Math.min(1, (this.ageSec - this.birthT[i]) / mature)
         if (age <= 0.02) continue
-        const s = base * age
-        const tw = 0.45 + 0.55 * Math.abs(Math.sin(i * 1.93 + d.treble * 9))
-        g.globalAlpha = (0.3 + 0.5 * tw) * (1 - d.silence * 0.45) * age * alpha
-        // a cluster, not a single pixel: one square reads as noise at any
-        // distance, three offset ones read as foliage
+        const p = this.parent[i]
         const px = this.swayX[i]
         const py = this.swayY[i]
-        g.fillRect(px - s / 2, py - s / 2, s, s)
-        if (s > 1.2) {
-          const o = s * 0.85
-          const a1 = i * 2.399
-          g.fillRect(px + Math.cos(a1) * o - s * 0.35, py + Math.sin(a1) * o - s * 0.35, s * 0.7, s * 0.7)
-          const a2 = a1 + 2.1
-          g.fillRect(px + Math.cos(a2) * o - s * 0.3, py + Math.sin(a2) * o - s * 0.3, s * 0.6, s * 0.6)
-        }
+        const h1 = Math.sin(i * 12.9898) * 43758.5453
+        const hash = h1 - Math.floor(h1)
+        const twigAng = Math.atan2(py - this.swayY[p], px - this.swayX[p])
+        const rot =
+          twigAng +
+          (hash - 0.5) * 1.2 +
+          Math.sin(this.ageSec * 2.6 + i * 0.7) * 0.2 * (0.3 + d.treble)
+        const idx = (((Math.round((rot / TWO_PI) * spr.count) % spr.count) + spr.count) % spr.count)
+        const D = base * age * (1.6 + hash * 1.3)
+        const tw = 0.45 + 0.55 * Math.abs(Math.sin(i * 1.93 + d.treble * 9))
+        g.globalAlpha = (0.32 + 0.5 * tw) * (1 - d.silence * 0.45) * age * alpha
+        g.drawImage(spr.canvas, idx * spr.cell, 0, spr.cell, spr.cell, px - D / 2, py - D, D, D)
       }
     }
 
-    // falling leaves — they keep the season's colour on the way down
-    g.fillStyle = stops[season.stop]
-    for (const L of this.falling) {
-      g.globalAlpha = 0.7 * Math.min(1, L.life) * alpha
-      g.fillRect(L.x, L.y, 2.4 * u, 2.4 * u)
+    // falling leaves — outline sprites tumbling, keeping the season's colour
+    {
+      const spr = getLeafSprites(stops[season.stop])
+      const D = 6.5 * u
+      for (const L of this.falling) {
+        const idx = ((Math.floor(L.phase * 2.5) % spr.count) + spr.count) % spr.count
+        g.globalAlpha = 0.7 * Math.min(1, L.life) * alpha
+        g.drawImage(spr.canvas, idx * spr.cell, 0, spr.cell, spr.cell, L.x - D / 2, L.y - D / 2, D, D)
+      }
+    }
+    g.globalAlpha = 1
+  }
+
+  /** Bonsai vessel: an outlined trapezoid pot with rim and feet, drawn behind the trunk. */
+  private drawPot(g: CanvasRenderingContext2D, h: number, stops: string[], alpha: number): void {
+    const u = h / 1080
+    const s = this.treeScale
+    const ox = this.originX
+    const ry = this.rootY
+    const W = h * 0.13 * s
+    const H = h * 0.05 * s
+    g.lineCap = 'round'
+    g.lineJoin = 'round'
+    g.strokeStyle = stops[4]
+    g.lineWidth = 2.2 * u
+    g.globalAlpha = 0.9 * alpha
+    g.beginPath()
+    g.moveTo(ox - W, ry + 2 * u)
+    g.lineTo(ox + W, ry + 2 * u)
+    g.lineTo(ox + W * 0.98, ry + H * 0.34)
+    g.lineTo(ox + W * 0.78, ry + H)
+    g.lineTo(ox - W * 0.78, ry + H)
+    g.lineTo(ox - W * 0.98, ry + H * 0.34)
+    g.closePath()
+    g.stroke()
+    // rim shadow line + feet
+    g.globalAlpha = 0.5 * alpha
+    g.lineWidth = 1.4 * u
+    g.beginPath()
+    g.moveTo(ox - W * 0.94, ry + H * 0.3)
+    g.lineTo(ox + W * 0.94, ry + H * 0.3)
+    g.stroke()
+    g.globalAlpha = 0.9 * alpha
+    g.lineWidth = 2 * u
+    for (const fx of [-0.55, 0.55]) {
+      g.beginPath()
+      g.moveTo(ox + W * fx - W * 0.08, ry + H)
+      g.lineTo(ox + W * fx - W * 0.06, ry + H * 1.22)
+      g.lineTo(ox + W * fx + W * 0.06, ry + H * 1.22)
+      g.lineTo(ox + W * fx + W * 0.08, ry + H)
+      g.stroke()
+    }
+  }
+
+  /** Banyan: thin wavering roots dropped from the major limbs to the ground. */
+  private drawAerialRoots(
+    g: CanvasRenderingContext2D,
+    h: number,
+    stops: string[],
+    alpha: number
+  ): void {
+    const u = h / 1080
+    const st = this.bucketStart
+    const from = st[0]
+    const to = st[2] // structural buckets only
+    if (to <= from) return
+    g.strokeStyle = stops[3]
+    g.lineWidth = 1.2 * u
+    let drawn = 0
+    for (let k = from; k < to && drawn < 14; k++) {
+      const i = this.order[k]
+      // deterministic pick: the same limbs drip every night
+      if ((((i * 2654435761) >>> 0) & 7) !== 3) continue
+      const y0 = this.swayY[i]
+      if (this.rootY - y0 < h * 0.12 * this.treeScale) continue
+      drawn++
+      const x0 = this.swayX[i]
+      const segs = Math.max(4, Math.ceil((this.rootY - y0) / (16 * u)))
+      const grown = Math.min(1, (this.ageSec - this.birthT[i]) / 30) // roots reach slowly
+      if (grown <= 0.05) continue
+      g.globalAlpha = 0.34 * alpha
+      g.beginPath()
+      g.moveTo(x0, y0)
+      let x = x0
+      for (let s = 1; s <= Math.ceil(segs * grown); s++) {
+        x += Math.sin(s * 0.9 + i * 1.7 + this.ageSec * 0.4) * 1.7 * u
+        g.lineTo(x, y0 + ((this.rootY - y0) / segs) * s)
+      }
+      g.stroke()
+    }
+    g.globalAlpha = 1
+  }
+
+  /** Willow: pendulous strand curtains falling from the outer canopy. */
+  private drawStrands(
+    g: CanvasRenderingContext2D,
+    h: number,
+    stops: string[],
+    d: TreeDrive,
+    alpha: number,
+    onScreenSeg: number
+  ): void {
+    if (onScreenSeg <= 1.1) return // sub-pixel strands are pure cost
+    const u = h / 1080
+    const t = this.ageSec
+    const lean = d.wind * 1.4 * u
+    const spr = getLeafSprites(stops[3])
+    const budget = 420
+    const step = Math.max(1, Math.ceil(this.tipCount / budget))
+    const minDepth = this.maxDepth * 0.45
+    g.strokeStyle = stops[3]
+    g.lineWidth = 1 * u
+    let seen = 0
+    for (let i = 1; i < this.nNodes; i++) {
+      if (!this.alive[i] || this.childCount[i] !== 0 || this.depth[i] < minDepth) continue
+      if (seen++ % step !== 0) continue
+      const h1 = Math.sin(i * 78.233) * 43758.5453
+      const hash = h1 - Math.floor(h1)
+      const segLen = (9 + hash * 4) * u
+      // strands fall a good part of the way to the ground, like the reference
+      const targetLen = (this.rootY - this.swayY[i]) * (0.3 + hash * 0.4)
+      const segs = Math.max(4, Math.min(22, Math.round(targetLen / segLen)))
+      const phase = this.phase[i] * 3.1
+      let x = this.swayX[i]
+      let y = this.swayY[i]
+      g.globalAlpha = (0.28 + 0.3 * hash) * (1 - d.silence * 0.35) * alpha
+      g.beginPath()
+      g.moveTo(x, y)
+      for (let k = 1; k <= segs; k++) {
+        const free = k / segs
+        x += Math.sin(t * 1.4 + phase + k * 0.55) * 2.1 * u * free * (0.5 + d.wind) + lean * free
+        y += segLen
+        g.lineTo(x, y)
+      }
+      g.stroke()
+      // a small leaf at the strand's free end
+      const D = 4.6 * u * (0.7 + hash)
+      const idx = (i + Math.floor(t * 1.5)) % spr.count
+      g.drawImage(spr.canvas, idx * spr.cell, 0, spr.cell, spr.cell, x - D / 2, y - D / 2, D, D)
     }
     g.globalAlpha = 1
   }
