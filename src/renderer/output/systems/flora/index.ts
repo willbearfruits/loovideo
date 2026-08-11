@@ -127,6 +127,8 @@ export class FloraSystem implements VisualSystem {
       endless: p.bool('flora.endless'),
       reach: p.num('flora.reach'),
       decay: p.num('flora.decay'),
+      season: p.num('flora.season'),
+      daytime: p.num('flora.daytime'),
       leaves: p.num('flora.leaves'),
       kind: (p.str('flora.flockKind') || 'starlings') as FlockKind
     }

@@ -173,6 +173,12 @@ export const PARAMS: ParamDef[] = [
   // foliage fills in behind the growing frontier — a tip's leaf swells with
   // its age, so the canopy greens up over minutes rather than appearing whole
   n('flora.leaves', 'Foliage', 0, 1, 0.6, 'flora'),
+  // Season and time of day are plain modulatable phases, so a slow LFO routed
+  // at either one makes the year or the day pass on its own.
+  // 0 spring · 0.25 summer · 0.5 autumn · 0.75 winter · 1 wraps to spring
+  n('flora.season', 'Season', 0, 1, 0.15, 'flora'),
+  // 0 midnight · 0.25 dawn · 0.5 noon · 0.75 dusk · 1 wraps to midnight
+  n('flora.daytime', 'Time of Day', 0, 1, 0.5, 'flora'),
   n('flora.fit', 'Auto Frame', 0, 1, 0.7, 'flora', false),
   n('flora.horizon', 'Horizon', 0.4, 0.95, 0.78, 'flora', false)
 ]

@@ -37,6 +37,31 @@ export interface TreeDrive {
   decay: number
   /** foliage density 0..1 */
   leaves: number
+  /** 0 spring · 0.25 summer · 0.5 autumn · 0.75 winter (wraps) */
+  season: number
+}
+
+/**
+ * The year, as it reaches the canopy. Spring buds small and pale, summer is
+ * full and mid-toned, autumn turns to the palette's accent stop and lets go,
+ * winter is bare. `fall` is a multiplier on how readily a leaf detaches, so
+ * autumn actually rains and winter has nothing left to drop.
+ */
+export function seasonLeaf(season: number): { size: number; stop: number; fall: number } {
+  const s = ((season % 1) + 1) % 1
+  if (s < 0.25) {
+    const t = s / 0.25 // spring: budding
+    return { size: 0.25 + t * 0.75, stop: 2, fall: 0.25 }
+  }
+  if (s < 0.5) {
+    return { size: 1, stop: 3, fall: 0.35 } // summer: full canopy
+  }
+  if (s < 0.75) {
+    const t = (s - 0.5) / 0.25 // autumn: turning and falling
+    return { size: 1 - t * 0.35, stop: 4, fall: 1 + t * 3 }
+  }
+  const t = (s - 0.75) / 0.25 // winter: bare
+  return { size: Math.max(0, 0.65 - t * 0.65), stop: 4, fall: 2.5 * (1 - t) }
 }
 
 export type TreeKind = 'oak' | 'pine' | 'willow' | 'birch'
@@ -134,6 +159,8 @@ export class Tree {
   private ageSec = 0
   private birthT = new Float32Array(INIT_CAP)
   private leafUnit = 1
+  private seasonFall = 1
+  private leafFallCarry = 0
   private kind: TreeKind = 'oak'
   private prof: KindProfile = KINDS.oak
   /** >0 while this tree is being felled: everything sheds, nothing grows */
@@ -810,6 +837,28 @@ export class Tree {
       this.swayA[i] = a
     }
 
+    // the season's own leaf-fall: autumn rains, winter finishes emptying the
+    // tree, spring and summer barely let go at all
+    const season = seasonLeaf(d.season)
+    this.seasonFall = season.fall
+    if (season.fall > 0.6 && this.liveCount > 60) {
+      this.leafFallCarry += dt * (season.fall - 0.6) * 9 * d.leaves
+      while (this.leafFallCarry >= 1 && this.falling.length < 300) {
+        this.leafFallCarry -= 1
+        const tip = this.pickTip()
+        if (tip < 0) break
+        this.falling.push({
+          x: this.swayX[tip],
+          y: this.swayY[tip],
+          vx: (Math.random() - 0.5) * 22 * u,
+          vy: (7 + Math.random() * 16) * u,
+          life: 1,
+          phase: Math.random() * Math.PI * 2
+        })
+      }
+      if (this.leafFallCarry > 4) this.leafFallCarry = 0
+    }
+
     // deep silence sheds leaves
     if (d.silence > 0.5) {
       this.leafShed += dt * d.silence * 2.2
@@ -908,13 +957,14 @@ export class Tree {
 
     // leaves at the tips once the tree is established; flicker with treble.
     // Capped by a stride so a huge canopy does not spend the frame on foliage.
-    if (this.nNodes > 40 && onScreenSeg > 1.4 && d.leaves > 0.01) {
+    const season = seasonLeaf(d.season)
+    if (this.nNodes > 40 && onScreenSeg > 1.4 && d.leaves > 0.01 && season.size > 0.01) {
       // A leaf swells with the age of the tip carrying it, so foliage fills in
       // behind the growing frontier instead of the canopy appearing whole —
       // and a freshly regrown tree is visibly bare for a while.
-      const base = 2.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3)
+      const base = 2.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3) * season.size
       const mature = 6 // SECONDS for a leaf to reach full size
-      g.fillStyle = stops[3]
+      g.fillStyle = stops[season.stop]
       const budget = 4000
       const step = Math.max(1, Math.ceil(this.tipCount / budget))
       let seen = 0
@@ -930,8 +980,8 @@ export class Tree {
       }
     }
 
-    // falling leaves
-    g.fillStyle = stops[3]
+    // falling leaves — they keep the season's colour on the way down
+    g.fillStyle = stops[season.stop]
     for (const L of this.falling) {
       g.globalAlpha = 0.7 * Math.min(1, L.life) * alpha
       g.fillRect(L.x, L.y, 2.4 * u, 2.4 * u)

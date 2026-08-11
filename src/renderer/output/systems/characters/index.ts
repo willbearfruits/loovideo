@@ -25,6 +25,8 @@ interface Drop {
 }
 
 const MAX_ZALGO_PER_FRAME = 180
+/** chars.idle 0..1 → animation-rate floor. See the comment at `evolve`. */
+const IDLE_GAIN = 4
 
 export class CharactersSystem implements VisualSystem {
   readonly id = 'chars' as const
@@ -75,6 +77,8 @@ export class CharactersSystem implements VisualSystem {
   private idle = 0
   /** chars.drive, cached per frame: gain on the level/onset term */
   private drive = 1
+  private idleBuf = new Float32Array(0)
+  private idleBufR = new Float32Array(0)
 
   constructor() {
     this.texture.colorSpace = THREE.SRGBColorSpace
@@ -231,7 +235,7 @@ export class CharactersSystem implements VisualSystem {
 
     const bass = (audio.bands[0] + audio.bands[1]) / 2
     const metab = audio.active
-      ? Math.max((0.35 + audio.level * 1.4) * this.drive, this.idle)
+      ? Math.max((0.35 + audio.level * 1.4) * this.drive, this.idle * IDLE_GAIN)
       : 1
     const SENSE_DIST = 4 + p.num('chars.warp') * 5
     const SENSE_ANGLE = 0.6
@@ -360,7 +364,7 @@ export class CharactersSystem implements VisualSystem {
 
     // morph clock: runs with the music, freezes in silence
     const morph = audio.active
-      ? Math.max((0.06 + audio.level * 0.45) * this.drive, 0.2 * this.idle)
+      ? Math.max((0.06 + audio.level * 0.45) * this.drive, 0.5 * this.idle * IDLE_GAIN)
       : 0.2
     this.atT += dt * morph * Math.max(0.05, p.num('chars.flow'))
     if (audio.onset > 0.85 && this.atOnsetPrev <= 0.85) this.atT += 2 + Math.random() * 6
@@ -378,7 +382,9 @@ export class CharactersSystem implements VisualSystem {
 
     // silence starves the figure — fewer points feed the cloud
     const feed =
-      (audio.active ? Math.max((0.35 + audio.level * 0.9) * this.drive, this.idle) : 1) *
+      (audio.active
+        ? Math.max((0.35 + audio.level * 0.9) * this.drive, this.idle * IDLE_GAIN)
+        : 1) *
       (1 - audio.silence * 0.92)
     const iters = Math.round(size * 1.15 * feed)
     let x = Math.sin(t * 3) * 0.1
@@ -437,8 +443,8 @@ export class CharactersSystem implements VisualSystem {
     const hits = this.scopeHits
     hits.fill(0)
 
-    const L = audio.waveform
-    const R = audio.waveformR
+    const L = this.idleWave(audio, time)
+    const R = this.idleWave(audio, time, true)
     const amp = 0.46 * (0.4 + p.num('chars.contrast') * 0.6) * (0.5 + this.drive * 0.45)
     const cx = cols / 2
     const cy = rows / 2
@@ -494,6 +500,48 @@ export class CharactersSystem implements VisualSystem {
   // The amplified object, made visible: its raw waveform as glyph amplitude
   // bars around a center hairline. Silence reads as a breathing flatline.
 
+  /**
+   * The capture buffer, or a synthesised idle wave when there is nothing in it.
+   * Amplitude scales with chars.idle and collapses the moment real signal
+   * arrives, so the room still owns the picture whenever it has something to
+   * say. Returns the live buffer untouched when signal is present.
+   */
+  private idleWave(audio: AudioFrame, time: number, right = false): Float32Array {
+    const live = right ? audio.waveformR : audio.waveform
+    if (this.idle <= 0.001 || audio.level > 0.02) return live
+    const amt = this.idle * (1 - Math.min(1, audio.level / 0.02))
+    // the scope plots L against R, so the two idle channels must differ or the
+    // figure collapses to a 45° line
+    if (right) {
+      if (this.idleBufR.length !== live.length) this.idleBufR = new Float32Array(live.length)
+      const outR = this.idleBufR
+      for (let i = 0; i < outR.length; i++) {
+        const ph = (i / outR.length) * Math.PI * 2
+        outR[i] =
+          live[i] +
+          amt *
+            0.32 *
+            (Math.cos(ph * 2 + time * 1.3) * 0.6 +
+              Math.sin(ph * 5 - time * 0.9) * 0.25 +
+              Math.cos(ph * 11 + time * 2.2) * 0.15)
+      }
+      return outR
+    }
+    if (this.idleBuf.length !== live.length) this.idleBuf = new Float32Array(live.length)
+    const out = this.idleBuf
+    for (let i = 0; i < out.length; i++) {
+      const ph = (i / out.length) * Math.PI * 2
+      out[i] =
+        live[i] +
+        amt *
+          0.32 *
+          (Math.sin(ph * 3 - time * 1.7) * 0.6 +
+            Math.sin(ph * 7 + time * 1.1) * 0.25 +
+            Math.sin(ph * 13 - time * 2.6) * 0.15)
+    }
+    return out
+  }
+
   private drawWave(
     g: CanvasRenderingContext2D,
     time: number,
@@ -502,7 +550,10 @@ export class CharactersSystem implements VisualSystem {
   ): void {
     const a = this.atlas!
     const { cols, rows, cell } = this
-    const wf = audio.waveform
+    // wave reads the capture buffer directly, so with no signal it is a row of
+    // exact zeros — a dead flat line, not a slow one. chars.idle synthesises a
+    // quiet travelling wave underneath so the mode still reads during setup.
+    const wf = this.idleWave(audio, time)
     const mid = rows / 2
     // wave/scope read the audio buffer directly, so they never saw the idle
     // gating — but they still need chars.drive, or sparse material barely
@@ -582,8 +633,12 @@ export class CharactersSystem implements VisualSystem {
     // moves when there IS sound; with audio off it flows autonomously
     // chars.idle raises the floor so the field still breathes with no signal;
     // chars.drive is the gain on the dynamics on top of that floor
+    // IDLE_GAIN: the floor is expressed in the same units as the audio term,
+    // and those units are small — flowT is scaled by 0.28 before it reaches the
+    // noise, so an idle of 0.3 advanced the field 0.08 units/second, which is
+    // invisible. Anything below roughly 1.0 here reads as a frozen frame.
     const evolve = audio.active
-      ? Math.max((0.1 + audio.level * 1.9 + audio.onset * 0.5) * this.drive, this.idle)
+      ? Math.max((0.1 + audio.level * 1.9 + audio.onset * 0.5) * this.drive, this.idle * IDLE_GAIN)
       : 1
     this.flowT += dt * evolve * flowRate
     const dim = 1 - audio.silence * 0.55 // sustained quiet fades toward threshold

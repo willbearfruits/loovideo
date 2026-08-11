@@ -19,6 +19,30 @@ export interface SceneryDrive {
   onset: number
   silence: number
   horizonY: number
+  /** 0 midnight · 0.25 dawn · 0.5 noon · 0.75 dusk (wraps) */
+  daytime: number
+}
+
+/**
+ * The day, as light on the land. `sun` is elevation −1..1 (below/above the
+ * horizon), `light` is 0..1 daylight, and `body` says which disc to draw. The
+ * palette does the colouring — 5 fixed stops, so day and night are expressed
+ * as how much of the sky wash is laid down and where the disc sits, not by
+ * inventing colours outside the ramp.
+ */
+export function dayCycle(daytime: number): {
+  sun: number
+  light: number
+  body: 'sun' | 'moon'
+  arc: number
+} {
+  const t = ((daytime % 1) + 1) % 1
+  // elevation peaks at noon (0.5) and bottoms at midnight
+  const sun = -Math.cos(t * Math.PI * 2)
+  const light = Math.max(0, Math.min(1, sun * 0.5 + 0.5))
+  // horizontal position tracks whichever body is up, rising left, setting right
+  const arc = sun >= 0 ? (t - 0.25) * 2 : (t < 0.25 ? t + 0.75 : t - 0.75) * 2
+  return { sun, light, body: sun >= 0 ? 'sun' : 'moon', arc: Math.min(1, Math.max(0, arc)) }
 }
 
 /** Deterministic 0..1 from an integer — the whole landscape is built on this. */
@@ -47,14 +71,40 @@ export class Scenery {
     if (kind === 'bare') return
     const hy = d.horizonY
 
-    // sky wash: a little more weight toward the horizon so the land sits down
+    const day = dayCycle(d.daytime)
+
+    // sky wash: a little more weight toward the horizon so the land sits down.
+    // Daylight lays more of it down; at night it thins toward the bare ground
+    // colour so stars and a low moon still read against it.
     const sky = g.createLinearGradient(0, 0, 0, hy)
     sky.addColorStop(0, stops[0])
     sky.addColorStop(1, stops[1])
-    g.globalAlpha = 0.5
+    g.globalAlpha = 0.12 + day.light * 0.62
     g.fillStyle = sky
     g.fillRect(0, 0, w, hy)
     g.globalAlpha = 1
+
+    // sun or moon, rising left and setting right on an arc over the horizon
+    {
+      const r = h * (day.body === 'sun' ? 0.042 : 0.034)
+      const bx = w * (0.08 + day.arc * 0.84)
+      const elev = Math.abs(day.sun)
+      const by = hy - (hy * 0.16 + elev * hy * 0.62)
+      g.globalAlpha = day.body === 'sun' ? 0.85 : 0.9
+      g.fillStyle = stops[day.body === 'sun' ? 4 : 3]
+      g.beginPath()
+      g.arc(bx, by, r, 0, Math.PI * 2)
+      g.fill()
+      if (day.body === 'moon') {
+        // bite a crescent out of it with the sky colour behind
+        g.fillStyle = stops[0]
+        g.globalAlpha = 0.75
+        g.beginPath()
+        g.arc(bx - r * 0.4, by - r * 0.16, r * 0.92, 0, Math.PI * 2)
+        g.fill()
+      }
+      g.globalAlpha = 1
+    }
 
     // three hill ranges, far to near, each a little darker and a little lower
     for (let layer = 0; layer < 3; layer++) {
