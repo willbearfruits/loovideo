@@ -94,6 +94,7 @@ export class FloraSystem implements VisualSystem {
   setActive(on: boolean): void {
     this.active = on
     if (on) this.lastTreeKey = '' // regrow on each return to the system
+    this.cam.release() // a scene change always returns the auto-frame
   }
 
   setOverlay(on: boolean, opacity: number, blend: LayerBlend): void {
@@ -238,6 +239,9 @@ export class FloraSystem implements VisualSystem {
         this.treeScales = []
         this.treePlanes = []
         this.marginClock = 0
+        // a rebuilt grove is a new shot: manual camera never survives it,
+        // so the auto-frame can't silently stay disabled across changes
+        this.cam.release()
         // a grove, not a row of clones: staggered feet, alternating sizes, and
         // the node budget split so the whole stand stays inside the tier
         const share = Math.max(1200, Math.floor(q.treeNodeCap / nTrees))
