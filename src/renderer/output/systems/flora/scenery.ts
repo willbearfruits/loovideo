@@ -23,6 +23,9 @@ export interface SceneryDrive {
   daytime: number
   /** mirror strength of the lake, 0..1 — modulatable */
   reflection: number
+  /** visible world-x range inside the overscan backdrop, for culling */
+  viewL?: number
+  viewR?: number
 }
 
 /**
@@ -148,6 +151,94 @@ export class Scenery {
   }
   private smoke = 0
   private vane = 0
+
+  /**
+   * The far world: points of interest scattered across the overscan, one per
+   * ~zone, decided by hash — a mountain ridge, a cabin with a window that
+   * lights at night and a thread of chimney smoke, a pair of wild deer.
+   * Zoomed in you never see them; pull back and the world has neighbours.
+   */
+  drawFarPoints(
+    g: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    time: number,
+    stops: string[],
+    d: SceneryDrive
+  ): void {
+    const u = h / 1080
+    const hy = d.horizonY
+    const day = dayCycle(d.daytime)
+    const zone = h * 1.4
+    const vL = d.viewL ?? 0
+    const vR = d.viewR ?? w
+    const z0 = Math.max(0, Math.floor(vL / zone))
+    const z1 = Math.min(Math.ceil(w / zone), Math.ceil(vR / zone))
+    for (let z = z0; z <= z1; z++) {
+      const hh = Math.sin(z * 971.3) * 43758.5453
+      const r = hh - Math.floor(hh)
+      const cx = (z + 0.5) * zone + (r - 0.5) * zone * 0.5
+      if (cx < vL - 200 || cx > vR + 200) continue
+      const kind = Math.floor(r * 10)
+      if (kind < 4) continue // most zones are just land
+
+      if (kind < 6) {
+        // mountain ridge, pale — tone says far
+        g.fillStyle = stops[1]
+        g.globalAlpha = 0.5
+        g.beginPath()
+        g.moveTo(cx - zone * 0.45, hy)
+        for (let k = 0; k <= 8; k++) {
+          const t = k / 8
+          const hh2 = Math.sin((z * 13 + k) * 77.7) * 4375.5
+          const rr = hh2 - Math.floor(hh2)
+          g.lineTo(cx - zone * 0.45 + t * zone * 0.9, hy - h * (0.1 + rr * 0.16) * (1 - Math.abs(t - 0.5) * 1.6))
+        }
+        g.lineTo(cx + zone * 0.45, hy)
+        g.closePath()
+        g.fill()
+      } else if (kind < 8) {
+        // a cabin: gable silhouette, lit window at night, chimney smoke
+        const cw = 54 * u
+        const ch = 34 * u
+        g.globalAlpha = 0.85
+        g.fillStyle = stops[3]
+        g.fillRect(cx - cw / 2, hy - ch, cw, ch)
+        g.beginPath()
+        g.moveTo(cx - cw * 0.62, hy - ch)
+        g.lineTo(cx, hy - ch - cw * 0.42)
+        g.lineTo(cx + cw * 0.62, hy - ch)
+        g.closePath()
+        g.fill()
+        if (day.light < 0.45) {
+          g.fillStyle = stops[4]
+          g.globalAlpha = 0.9
+          g.fillRect(cx + cw * 0.12, hy - ch * 0.62, cw * 0.18, ch * 0.28)
+        }
+        // smoke: a wavering dotted thread, thinning in silence
+        g.fillStyle = stops[2]
+        for (let s = 0; s < 7; s++) {
+          const sy = hy - ch - cw * 0.42 - s * 9 * u
+          const sx = cx - cw * 0.28 + Math.sin(time * 0.7 + s * 0.9 + z) * (2 + s * 1.6) * u
+          g.globalAlpha = (0.4 - s * 0.05) * (1 - d.silence * 0.6)
+          g.fillRect(sx, sy, (2 + s * 0.5) * u, (2 + s * 0.5) * u)
+        }
+      } else {
+        // wild deer, far off: two slim silhouettes, heads down, one lookout
+        g.fillStyle = stops[3]
+        for (let a = 0; a < 2; a++) {
+          const ax = cx + a * 30 * u
+          const lift = a === 1 && Math.sin(time * 0.23 + z) > 0.6 ? 6 * u : 0
+          g.globalAlpha = 0.7
+          g.fillRect(ax, hy - 12 * u, 16 * u, 7 * u)
+          g.fillRect(ax + 13 * u, hy - 17 * u - lift, 3 * u, 7 * u)
+          g.fillRect(ax + 2 * u, hy - 6 * u, 2 * u, 6 * u)
+          g.fillRect(ax + 12 * u, hy - 6 * u, 2 * u, 6 * u)
+        }
+      }
+    }
+    g.globalAlpha = 1
+  }
 
   /** Behind everything: sky wash + hills. Drawn before the ground. */
   drawBack(
@@ -302,6 +393,8 @@ export class Scenery {
     // sparse, darker; all of them leaning into the gusts
     g.lineCap = 'round'
     const N = Math.round(w / 6.5) // density holds under backdrop overscan
+    const vL = (d.viewL ?? 0) - 40
+    const vR = (d.viewR ?? w) + 40
     const lean = Math.sin(time * 0.9) * 0.35 + Math.sin(time * 0.37 + 1.7) * 0.25
     for (let i = 0; i < N; i++) {
       const hh = Math.sin(i * 127.1) * 43758.5453
@@ -310,6 +403,7 @@ export class Scenery {
       const r2 = hh2 - Math.floor(hh2)
       const depth = Math.pow(r1, 1.6) // bias toward the far field
       const x = r2 * w
+      if (x < vL || x > vR) continue // outside the camera's window
       const y = hy + (h - hy) * depth
       const size = (2.5 + depth * 13) * u
       const sway = lean * d.wind * size * 0.45 * (0.6 + r2 * 0.8)

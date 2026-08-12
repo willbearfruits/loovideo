@@ -42,6 +42,8 @@ export class FloraSystem implements VisualSystem {
   private trees: Tree[] = []
   private treeFade: number[] = []
   private treeScales: number[] = []
+  /** 0 back · 1 mid (the subject) · 2 front (between camera and world) */
+  private treePlanes: number[] = []
   private sproutClock = 0
   private marginClock = 0
   private marginFlip = false
@@ -184,17 +186,25 @@ export class FloraSystem implements VisualSystem {
     const bz = Math.pow(camZ, 0.55)
     const bx = (this.cam.focusX - w / 2) * 0.6
     const by = (this.cam.focusY - horizonY) * 0.35
-    // OVERSCAN: the land is generated live at 4× the frame width (and deep
-    // below the frame), so pulling the camera far back never reveals the
-    // backdrop's edge — the world simply continues.
-    const OS = 4
+    // OVERSCAN: the land is generated live at 10× the frame width (and deep
+    // below the frame) — but only what the camera can actually see gets
+    // drawn, so a vast world costs a narrow window. Far zones carry points
+    // of interest: mountain ridges, cabins, wild deer.
+    const OS = 10
     const wOS = w * OS
     g.save()
     g.translate(w / 2, horizonY)
     g.scale(bz, bz)
     g.translate(-w / 2 - bx, -horizonY - by)
     g.translate(-(wOS - w) / 2, 0)
+    {
+      // visible world-x window inside the overscan, for culling
+      const off = w / 2 + bx + (wOS - w) / 2
+      drive.viewL = off - w / 2 / bz - 60
+      drive.viewR = off + w / 2 / bz + 60
+    }
     this.scenery.drawBack(g, wOS, h, scene, stops, drive)
+    this.scenery.drawFarPoints(g, wOS, h, time, stops, drive)
 
     if (scene !== 'bare' && !wantStars) {
       // the field itself (stars already lays a ground silhouette of its own)
@@ -226,6 +236,7 @@ export class FloraSystem implements VisualSystem {
         this.trees = []
         this.treeFade = []
         this.treeScales = []
+        this.treePlanes = []
         this.marginClock = 0
         // a grove, not a row of clones: staggered feet, alternating sizes, and
         // the node budget split so the whole stand stays inside the tier
@@ -236,6 +247,7 @@ export class FloraSystem implements VisualSystem {
           this.plantTree(t, i, nTrees)
           this.trees.push(t)
           this.treeFade.push(0)
+          this.treePlanes.push(1)
         }
       }
       // FELL: momentary. The button sets the flag, we start the sequence on the
@@ -261,6 +273,7 @@ export class FloraSystem implements VisualSystem {
           this.treeScales.push(this.plantSprout(t))
           this.trees.push(t)
           this.treeFade.push(0)
+          this.treePlanes.push(Math.random() < 0.25 ? 0 : 1)
         }
       }
 
@@ -272,6 +285,7 @@ export class FloraSystem implements VisualSystem {
           this.trees.splice(i, 1)
           this.treeFade.splice(i, 1)
           this.treeScales.splice(i, 1)
+          this.treePlanes.splice(i, 1)
           continue
         }
         this.treeFade[i] = 0
@@ -301,8 +315,9 @@ export class FloraSystem implements VisualSystem {
       let minX = Infinity
       let maxX = -Infinity
       let minY = Infinity
-      for (const t of this.trees) {
-        const b = t.bounds()
+      for (let ti = 0; ti < this.trees.length; ti++) {
+        if ((this.treePlanes[ti] ?? 1) === 2) continue // front trees are framing, not subject
+        const b = this.trees[ti].bounds()
         if (b.minX < minX) minX = b.minX
         if (b.maxX > maxX) maxX = b.maxX
         if (b.minY < minY) minY = b.minY
@@ -343,6 +358,8 @@ export class FloraSystem implements VisualSystem {
           this.treeScales.push(this.plantSprout(t, x))
           this.trees.push(t)
           this.treeFade.push(0)
+          // pulled far back? a new tree may rise CLOSE to the camera instead
+          this.treePlanes.push(camZ < 0.75 && Math.random() < 0.4 ? 2 : Math.random() < 0.3 ? 0 : 1)
         }
       }
 
@@ -385,6 +402,7 @@ export class FloraSystem implements VisualSystem {
             this.treeScales.push(this.plantSprout(t, wx))
             this.trees.push(t)
             this.treeFade.push(0)
+            this.treePlanes.push(1)
           } else {
             // full stand: the nearest tree yields its ground to a new sapling
             let best = 0
@@ -438,23 +456,39 @@ export class FloraSystem implements VisualSystem {
       }
       this.cam.update(dt, camT, drive.onset)
 
-      g.save()
-      this.cam.apply(g, w / 2, anchorY, this.fitScale)
-      // trees get the TRUE on-screen scale (fit × camera zoom) so both the
-      // sub-pixel cull and the glow discipline see what the audience sees
+      // DEPTH PLANES: trees live on three planes — back (paler, moves less),
+      // mid (the subject), front (larger, moves MORE than the camera — a tree
+      // between you and the world). Each plane gets its own parallax
+      // transform; within a plane, smaller trees still draw first and paler.
       const screenScale = this.fitScale * this.cam.currentZoom
-      // atmospheric depth: far (small) trees draw first and paler, near trees
-      // last and full — value compression is the primary depth cue in mono
-      const drawOrder = this.trees.map((_, i) => i)
-      drawOrder.sort((a, b) => (this.treeScales[a] ?? 1) - (this.treeScales[b] ?? 1))
-      for (const i of drawOrder) {
-        const fade = this.treeFade[i] > 0 ? 1 - this.treeFade[i] / SUCCESSION_FADE : 1
-        const s = this.treeScales[i] ?? 1
-        const depthMul = 0.55 + 0.45 * Math.min(1, Math.max(0, (s - 0.4) / 0.7))
-        this.trees[i].draw(g, w, h, stops, drive, screenScale, Math.max(0, fade) * depthMul)
+      const PLANES = [
+        { s: 0.55, pan: 0.78, tone: 0.5 },
+        { s: 1, pan: 1, tone: 1 },
+        { s: 1.9, pan: 1.5, tone: 1 }
+      ]
+      for (let plane = 0; plane < 3; plane++) {
+        const cfg = PLANES[plane]
+        const members = this.trees
+          .map((_, i) => i)
+          .filter((i) => (this.treePlanes[i] ?? 1) === plane)
+        if (members.length === 0) continue
+        members.sort((a, b) => (this.treeScales[a] ?? 1) - (this.treeScales[b] ?? 1))
+        g.save()
+        const Z = this.fitScale * this.cam.currentZoom
+        const pfx = w / 2 + (this.cam.focusX - w / 2) * cfg.pan
+        g.translate(w / 2, anchorY)
+        g.scale(Z * cfg.s, Z * cfg.s)
+        g.translate(-pfx, -this.cam.focusY)
+        for (const i of members) {
+          const fade = this.treeFade[i] > 0 ? 1 - this.treeFade[i] / SUCCESSION_FADE : 1
+          const s = this.treeScales[i] ?? 1
+          const depthMul =
+            (0.55 + 0.45 * Math.min(1, Math.max(0, (s - 0.4) / 0.7))) * cfg.tone
+          this.trees[i].draw(g, w, h, stops, drive, screenScale * cfg.s, Math.max(0, fade) * depthMul)
+        }
+        if (plane === 1) this.drawFireflies(g, dt, time, w, h, stops, drive)
+        g.restore()
       }
-      this.drawFireflies(g, dt, time, w, h, stops, drive)
-      g.restore()
 
       // roosting: living tree tips become the flock's perches, transformed to
       // the flock's screen space through the same camera
@@ -462,7 +496,10 @@ export class FloraSystem implements VisualSystem {
       if (wantFlock && this.trees.length > 0 && drive.silence > 0.25) {
         const per = Math.max(6, Math.floor(48 / this.trees.length))
         const world: { x: number; y: number }[] = []
-        for (const t of this.trees) t.perchTips(world, world.length + per)
+        for (let ti = 0; ti < this.trees.length; ti++) {
+          if ((this.treePlanes[ti] ?? 1) !== 1) continue
+          this.trees[ti].perchTips(world, world.length + per)
+        }
         const Z = this.fitScale * this.cam.currentZoom
         for (const a of world) {
           this.perchScratch.push({
