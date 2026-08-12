@@ -46,6 +46,9 @@ export interface TreeDrive {
   leaves: number
   /** 0 spring · 0.25 summer · 0.5 autumn · 0.75 winter (wraps) */
   season: number
+  /** rendering style: ink (core+halo), brush (jittered passes + dry-brush
+   * twigs), hairline (one delicate weight, no halo) */
+  stroke: string
 }
 
 /**
@@ -209,6 +212,8 @@ export class Tree {
   private stall = 0
   private lastOnset = 0
   private ambientCarry = 0
+  private maxR = 0
+  private girthTick = 0
   private maxDepth = 1
   private falling: Leaf[] = []
   private leafShed = 0
@@ -732,6 +737,14 @@ export class Tree {
     this.leafUnit = u
     if (this.nNodes === 0) this.reset(w, h, 0.6, d.horizonY)
 
+    // girth accrues with wall time, so widths must refresh even when no
+    // growth marks them dirty — every few seconds is plenty for a cambium
+    this.girthTick += dt
+    if (this.girthTick > 4) {
+      this.girthTick = 0
+      this.radiusDirty = true
+    }
+
     // Felling: for the first second the leaves let go, then the structure
     // itself comes apart from the canopy inward. Nothing grows meanwhile.
     if (this.fellT > 0) {
@@ -799,7 +812,10 @@ export class Tree {
     if (this.radiusDirty) {
       this.radiusDirty = false
       const tipR = 1.1 * u
-      const trunkCap = h / 42
+      // secondary growth: old wood keeps thickening with age (a cambium),
+      // so a long-lived trunk widens even after the canopy stops gaining
+      // nodes — and the cap itself rises slowly across the tree's life
+      const trunkCap = (h / 42) * (1 + Math.min(1, this.ageSec / 300))
       // geometric width thresholds, trunk → twig
       const T = [10, 6.5, 4.2, 2.8, 1.9, 1.35, 0.95].map((v) => v * u)
       const bucketOf = (r: number): number => {
@@ -816,10 +832,13 @@ export class Tree {
       let bx1 = -Infinity
       let by0 = Infinity
       let by1 = -Infinity
+      let maxR = 0
       for (let i = 0; i < this.nNodes; i++) {
         if (!this.alive[i]) continue
-        const r = Math.min(trunkCap, tipR * Math.sqrt(this.childCount[i] + 1))
+        const girth = 1 + Math.min(1.7, (this.ageSec - this.birthT[i]) * 0.008)
+        const r = Math.min(trunkCap, tipR * Math.sqrt(this.childCount[i] + 1) * girth)
         this.radius[i] = r
+        if (r > maxR) maxR = r
         const x = this.nodesX[i]
         const y = this.nodesY[i]
         if (x < bx0) bx0 = x
@@ -836,6 +855,7 @@ export class Tree {
         this.minY = by0
         this.maxY = by1
       }
+      this.maxR = maxR
       this.tipCount = tips
       for (let b = 0; b < 8; b++) st[b + 1] += st[b]
       for (let b = 0; b < 8; b++) this.cursor[b] = st[b]
@@ -1038,6 +1058,11 @@ export class Tree {
     g.lineCap = 'round'
     g.lineJoin = 'round'
     const widths = [13 * u, 8.5 * u, 5.5 * u, 3.6 * u, 2.4 * u, 1.6 * u, 1.1 * u, 0.8 * u]
+    // the trunk's stroke width follows the actual pipe-model radius, so
+    // secondary growth is visible: an old trunk is a wide trunk
+    widths[0] = Math.min(27 * u, Math.max(13 * u, this.maxR * 1.1))
+    widths[1] = Math.min(16 * u, Math.max(8.5 * u, this.maxR * 0.62))
+    const style = d.stroke
     // structural branches are always drawn whole; the twig tiers get a segment
     // budget so a canopy that has been growing for an hour costs the same to
     // stroke as one that started ten minutes ago
@@ -1055,8 +1080,9 @@ export class Tree {
     // and un-damped halo + bloom blows it out to a white blob
     const zoomDamp = Math.min(1, 1.5 / Math.max(1, fitScale))
     g.strokeStyle = stops[2]
-    g.globalAlpha = 0.15 * alpha * Math.min(1, 340 / structN) * zoomDamp
-    for (let b = 0; b < 3; b++) {
+    g.globalAlpha =
+      (style === 'hairline' ? 0 : 0.15) * alpha * Math.min(1, 340 / structN) * zoomDamp
+    for (let b = 0; b < (style === 'hairline' ? 0 : 3); b++) {
       const from = st[b]
       const to = st[b + 1]
       if (to <= from) continue
@@ -1089,6 +1115,72 @@ export class Tree {
       const curved = stride === 1 && b < 6
       g.globalAlpha = coreAlpha[b] * alpha
       g.strokeStyle = coreCols[b]
+
+      // ---- stroke styles -------------------------------------------------
+      if (style === 'hairline') {
+        // one delicate weight everywhere: the all-line look of etchings
+        g.lineWidth = Math.max(0.8 * u, widths[b] * 0.22)
+        g.globalAlpha = (b < 2 ? 0.95 : 0.8) * alpha
+        g.strokeStyle = b < 2 ? stops[4] : stops[3]
+        g.beginPath()
+        for (let k = from; k < to; k += stride) {
+          const i = this.order[k]
+          const p = this.parent[i]
+          g.moveTo(this.swayX[p], this.swayY[p])
+          g.lineTo(this.swayX[i], this.swayY[i])
+        }
+        g.stroke()
+        continue
+      }
+
+      if (style === 'brush' && b < 4) {
+        // wet brush: three jittered passes build the stroke — accumulation,
+        // not a single confident line (the inconvergent/Hobbs move, budgeted)
+        for (let pass = 0; pass < 3; pass++) {
+          g.lineWidth = widths[b] * (0.62 - pass * 0.09)
+          g.globalAlpha = 0.38 * alpha
+          g.beginPath()
+          for (let k = from; k < to; k += stride) {
+            const i = this.order[k]
+            const p = this.parent[i]
+            const dx = this.swayX[i] - this.swayX[p]
+            const dy = this.swayY[i] - this.swayY[p]
+            const inv = 1 / (Math.hypot(dx, dy) || 1)
+            const hsh = Math.sin(i * 37.7 + pass * 91.3) * 43758.5453
+            const off = (hsh - Math.floor(hsh) - 0.5) * widths[b] * 0.55
+            const nx = -dy * inv * off
+            const ny = dx * inv * off
+            g.moveTo(this.swayX[p] + nx, this.swayY[p] + ny)
+            g.lineTo(this.swayX[i] + nx, this.swayY[i] + ny)
+          }
+          g.stroke()
+        }
+        continue
+      }
+
+      if (style === 'brush') {
+        // dry brush (kasure) on the outer wood: the stroke breaks up where
+        // the bristles run out — gaps and doubled streaks, never solid
+        for (const off of [-0.3, 0.35]) {
+          g.lineWidth = widths[b] * 0.6
+          g.globalAlpha = coreAlpha[b] * 0.62 * alpha
+          g.beginPath()
+          for (let k = from; k < to; k += stride) {
+            const i = this.order[k]
+            if ((((i * 2654435761) >>> 0) & 255) < 72) continue // the gaps
+            const p = this.parent[i]
+            const dx = this.swayX[i] - this.swayX[p]
+            const dy = this.swayY[i] - this.swayY[p]
+            const inv = 1 / (Math.hypot(dx, dy) || 1)
+            const nx = -dy * inv * widths[b] * off
+            const ny = dx * inv * widths[b] * off
+            g.moveTo(this.swayX[p] + nx, this.swayY[p] + ny)
+            g.lineTo(this.swayX[i] + nx, this.swayY[i] + ny)
+          }
+          g.stroke()
+        }
+        continue
+      }
 
       if (b === 0 && K.fiber) {
         // fiber bundle: three offset strands instead of one heavy line — the

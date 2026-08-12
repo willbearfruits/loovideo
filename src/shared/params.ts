@@ -153,6 +153,7 @@ export const PARAMS: ParamDef[] = [
   e('flora.scene', 'Landscape', ['bare', 'hills', 'farm', 'lake'], 'bare', 'flora'),
   e('flora.flockKind', 'Flock', ['starlings', 'geese', 'midges'], 'starlings', 'flora'),
   e('flora.treeKind', 'Species', ['mixed', 'oak', 'pine', 'willow', 'birch', 'sapling', 'bonsai', 'banyan'], 'mixed', 'flora'),
+  e('flora.stroke', 'Stroke', ['ink', 'brush', 'hairline'], 'ink', 'flora'),
   // momentary: the renderer clears it as soon as it starts the fell sequence
   b('flora.fell', 'FELL THE TREES', false, 'flora'),
   b('flora.addStars', '+ Sky', false, 'flora'),

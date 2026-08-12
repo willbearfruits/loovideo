@@ -138,6 +138,7 @@ export class FloraSystem implements VisualSystem {
       season: p.num('flora.season'),
       daytime: p.num('flora.daytime'),
       leaves: p.num('flora.leaves'),
+      stroke: p.str('flora.stroke') || 'ink',
       kind: (p.str('flora.flockKind') || 'starlings') as FlockKind
     }
     const scene = (p.str('flora.scene') || 'bare') as SceneKind
@@ -360,7 +361,7 @@ export class FloraSystem implements VisualSystem {
       )
       this.flock.resize(Math.max(24, want), w, h)
       this.flock.update(dt, time, w, h, drive)
-      this.flock.draw(g, w, h, stops, drive)
+      this.flock.draw(g, w, h, time, stops, drive)
     }
 
     // --- the lake: the finished world reflected below the shoreline ----------

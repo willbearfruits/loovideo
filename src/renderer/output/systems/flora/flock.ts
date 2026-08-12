@@ -406,7 +406,14 @@ export class Flock {
     }
   }
 
-  draw(g: CanvasRenderingContext2D, w: number, h: number, stops: string[], _d: FlockDrive): void {
+  draw(
+    g: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    time: number,
+    stops: string[],
+    d: FlockDrive
+  ): void {
     const u = h / 1080
     // Past ~12k birds the per-bird fillRect call overhead dominates the frame,
     // so the flock is splatted straight into a pixel buffer instead — the cost
@@ -416,19 +423,63 @@ export class Flock {
       return
     }
 
-    // birds are dots — density does the drawing, overlap makes the billows
-    const s = Math.max(1.5, 2.2 * u)
-    g.fillStyle = stops[4]
-    g.globalAlpha = 0.78
-    for (let i = 0; i < this.n; i++) {
-      if (this.state[i] === PERCHED) continue
-      g.fillRect(this.px[i] - s / 2, this.py[i] - s / 2, s, s)
+    if (d.kind === 'geese') {
+      // few and large: each goose is the one-line V glyph, wings beating in
+      // flap–glide bouts (frozen at a shallow dihedral while gliding).
+      // Phase-skew in the beat: fast downstroke, slow upstroke.
+      g.strokeStyle = stops[4]
+      g.lineWidth = Math.max(1.2, 1.6 * u)
+      g.lineCap = 'round'
+      g.globalAlpha = 0.9
+      g.beginPath()
+      for (let i = 0; i < this.n; i++) {
+        if (this.state[i] === PERCHED) continue
+        const r = this.rnd[i]
+        const span = (9 + r * 5) * u
+        const bout = (time * 0.12 + r * 7.3) % 1
+        let ang: number
+        if (bout < 0.62) {
+          const th = Math.PI * 2 * (3.2 + r * 0.6) * time
+          const a = Math.sin(th + 0.4 * Math.sin(th)) // skewed beat
+          ang = a * 0.61 + 0.26 // +50°…−20° range, biased above horizontal
+        } else {
+          ang = 0.21 // glide: shallow dihedral
+        }
+        const x = this.px[i]
+        const y = this.py[i]
+        const dxw = Math.cos(ang) * span
+        const dyw = Math.sin(ang) * span
+        g.moveTo(x - dxw, y - dyw)
+        g.lineTo(x, y)
+        g.lineTo(x + dxw, y - dyw)
+      }
+      g.stroke()
+    } else {
+      // birds are dots — density does the drawing, overlap makes the billows.
+      // Two size classes give the cloud a hint of near/far.
+      g.fillStyle = stops[4]
+      for (let i = 0; i < this.n; i++) {
+        if (this.state[i] === PERCHED) continue
+        const s = Math.max(1.5, (1.7 + this.rnd[i] * 1.1) * u)
+        g.globalAlpha = 0.6 + this.rnd[i] * 0.3
+        g.fillRect(this.px[i] - s / 2, this.py[i] - s / 2, s, s)
+      }
     }
-    // perched birds sit on the line
+
+    // perched birds sit on their branch or wire — alive, not frozen: discrete
+    // shifts and little hops on independent clocks (birds saccade, they don't
+    // ease), settling completely as the silence deepens
+    g.fillStyle = stops[4]
     g.globalAlpha = 0.92
     for (let i = 0; i < this.n; i++) {
       if (this.state[i] !== PERCHED) continue
-      g.fillRect(this.px[i] - u, this.py[i] - 2.6 * u, 2.2 * u, 2.6 * u)
+      const r = this.rnd[i]
+      const twitchClock = Math.floor(time * (0.6 + r) + r * 23)
+      const th = Math.sin(twitchClock * 78.233) * 43758.5453
+      const tw = th - Math.floor(th)
+      const lean = (tw - 0.5) * 1.6 * u * (1 - d.silence * 0.6)
+      const hop = tw > 0.93 && d.silence < 0.85 ? 1.4 * u : 0
+      g.fillRect(this.px[i] - u + lean, this.py[i] - 2.6 * u - hop, 2.2 * u, 2.6 * u + hop)
     }
     g.globalAlpha = 1
   }
