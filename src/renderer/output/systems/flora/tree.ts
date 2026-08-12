@@ -887,8 +887,18 @@ export class Tree {
         this.swayA[i] = 0
         continue
       }
-      const ox = this.nodesX[i] - this.nodesX[p]
-      const oy = this.nodesY[i] - this.nodesY[p]
+      let ox = this.nodesX[i] - this.nodesX[p]
+      let oy = this.nodesY[i] - this.nodesY[p]
+      // growth is continuous, not stepped: a young segment EXTENDS from its
+      // parent over its first half-second instead of popping in whole —
+      // children ride the extending tip, so whole twigs reach outward
+      const segAge = this.ageSec - this.birthT[i]
+      if (segAge < 0.5) {
+        const q = segAge * 2
+        const grow = q * (2 - q) // ease-out
+        ox *= grow
+        oy *= grow
+      }
       const dfrac = this.depth[i] / md
       const stiff = amp * Math.pow(dfrac, 1.7)
       if (stiff < 1e-4 && this.swayA[p] === 0) {
