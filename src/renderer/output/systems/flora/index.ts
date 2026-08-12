@@ -40,6 +40,7 @@ export class FloraSystem implements VisualSystem {
   private treeFade: number[] = []
   private treeScales: number[] = []
   private sproutClock = 0
+  private lastRevealW = 0
   private stars = new Stars()
   private scenery = new Scenery()
   private fauna = new Fauna()
@@ -138,6 +139,8 @@ export class FloraSystem implements VisualSystem {
       season: p.num('flora.season'),
       daytime: p.num('flora.daytime'),
       leaves: p.num('flora.leaves'),
+      leafSize: p.num('flora.leafSize') || 1,
+      birdSize: p.num('flora.birdSize') || 1,
       stroke: p.str('flora.stroke') || 'ink',
       kind: (p.str('flora.flockKind') || 'starlings') as FlockKind
     }
@@ -196,6 +199,7 @@ export class FloraSystem implements VisualSystem {
         this.trees = []
         this.treeFade = []
         this.treeScales = []
+        this.lastRevealW = 0
         // a grove, not a row of clones: staggered feet, alternating sizes, and
         // the node budget split so the whole stand stays inside the tier
         const share = Math.max(1200, Math.floor(q.treeNodeCap / nTrees))
@@ -272,12 +276,42 @@ export class FloraSystem implements VisualSystem {
       if (Number.isFinite(minX) && maxX > minX) {
         const spanX = maxX - minX
         const spanY = Math.max(1, horizonY - minY)
-        target = Math.min(1, (w * 0.92) / spanX, (horizonY * 0.94) / spanY)
+        // the lake composition needs the WHOLE tree above the shoreline —
+        // crown to trunk — so the mirror has something complete to hold;
+        // it also keeps pulling back as the tree grows, no fit fader needed
+        const mX = scene === 'lake' ? 0.84 : 0.92
+        const mY = scene === 'lake' ? 0.8 : 0.94
+        target = Math.min(1, (w * mX) / spanX, (horizonY * mY) / spanY)
       }
-      const eff = 1 + (target - 1) * fit
+      const eff = 1 + (target - 1) * (scene === 'lake' ? 1 : fit)
       // ease toward the target so a growth spurt does not snap the framing
       this.fitScale += (eff - this.fitScale) * Math.min(1, dt * 1.6)
       const cxTree = Number.isFinite(minX) ? (minX + maxX) / 2 : w / 2
+
+      // colonize revealed ground: as the frame pulls back, world beyond the
+      // original planting strip comes into view — and the empty margins are
+      // an invitation. Each significant reveal lets one volunteer take root
+      // out there, so a long zoom-out becomes a widening woodland.
+      const visHalf = w / 2 / Math.max(0.05, this.fitScale)
+      if (this.lastRevealW === 0) this.lastRevealW = visHalf * 2
+      if (
+        visHalf * 2 > this.lastRevealW * 1.18 &&
+        this.trees.length < MAX_TREES &&
+        this.treeSpec &&
+        drive.silence < 0.5
+      ) {
+        this.lastRevealW = visHalf * 2
+        const groveHalf = Number.isFinite(minX) ? Math.max(1, (maxX - minX) / 2) : w * 0.1
+        const margin = visHalf * 0.85 - groveHalf
+        if (margin > w * 0.05) {
+          const t = new Tree()
+          const side = Math.random() < 0.5 ? -1 : 1
+          const x = cxTree + side * (groveHalf + w * 0.04 + Math.random() * margin)
+          this.treeScales.push(this.plantSprout(t, x))
+          this.trees.push(t)
+          this.treeFade.push(0)
+        }
+      }
 
       // the camera sits on top of the auto-frame: same fit, but the story can
       // choose the focus — wide, seed push-in, a slow drift, or one leaf down
@@ -429,8 +463,9 @@ export class FloraSystem implements VisualSystem {
     g.globalAlpha = 1
   }
 
-  /** A volunteer seedling: random ground, small stature, its own species. */
-  private plantSprout(t: Tree): number {
+  /** A volunteer seedling: random ground (or exactly `atX`), small stature,
+   * its own species. */
+  private plantSprout(t: Tree, atX?: number): number {
     const s = this.treeSpec
     if (!s) return 1
     const f = 0.08 + Math.random() * 0.84
@@ -441,7 +476,7 @@ export class FloraSystem implements VisualSystem {
         ? species[(Math.random() * species.length) | 0]
         : (s.kind as TreeKind)
     const share = Math.max(1200, Math.floor(s.share * 0.45))
-    t.reset(s.w, s.h, s.density, s.horizonY, s.w * f, scale, share, kind)
+    t.reset(s.w, s.h, s.density, s.horizonY, atX ?? s.w * f, scale, share, kind)
     return scale
   }
 

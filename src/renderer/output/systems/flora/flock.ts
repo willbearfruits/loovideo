@@ -26,6 +26,8 @@ export interface FlockDrive {
   /** roost anchors (screen space) — tree tips; when present, landing birds
    * settle into the branches instead of onto the ground line */
   perches?: { x: number; y: number }[]
+  /** bird glyph scale, 0.3..3 — modulatable */
+  birdSize: number
 }
 
 /**
@@ -419,7 +421,7 @@ export class Flock {
     // so the flock is splatted straight into a pixel buffer instead — the cost
     // becomes the buffer clear (constant) plus a few writes per bird.
     if (this.n >= SPLAT_MIN) {
-      this.drawSplat(g, w, h, stops)
+      this.drawSplat(g, w, h, stops, d.birdSize)
       return
     }
 
@@ -435,7 +437,7 @@ export class Flock {
       for (let i = 0; i < this.n; i++) {
         if (this.state[i] === PERCHED) continue
         const r = this.rnd[i]
-        const span = (9 + r * 5) * u
+        const span = (9 + r * 5) * u * d.birdSize
         const bout = (time * 0.12 + r * 7.3) % 1
         let ang: number
         if (bout < 0.62) {
@@ -460,7 +462,7 @@ export class Flock {
       g.fillStyle = stops[4]
       for (let i = 0; i < this.n; i++) {
         if (this.state[i] === PERCHED) continue
-        const s = Math.max(1.5, (1.7 + this.rnd[i] * 1.1) * u)
+        const s = Math.max(1.2, (1.7 + this.rnd[i] * 1.1) * u * d.birdSize)
         g.globalAlpha = 0.6 + this.rnd[i] * 0.3
         g.fillRect(this.px[i] - s / 2, this.py[i] - s / 2, s, s)
       }
@@ -477,14 +479,21 @@ export class Flock {
       const twitchClock = Math.floor(time * (0.6 + r) + r * 23)
       const th = Math.sin(twitchClock * 78.233) * 43758.5453
       const tw = th - Math.floor(th)
+      const bs = d.birdSize
       const lean = (tw - 0.5) * 1.6 * u * (1 - d.silence * 0.6)
-      const hop = tw > 0.93 && d.silence < 0.85 ? 1.4 * u : 0
-      g.fillRect(this.px[i] - u + lean, this.py[i] - 2.6 * u - hop, 2.2 * u, 2.6 * u + hop)
+      const hop = tw > 0.93 && d.silence < 0.85 ? 1.4 * u * bs : 0
+      g.fillRect(this.px[i] - u * bs + lean, this.py[i] - 2.6 * u * bs - hop, 2.2 * u * bs, 2.6 * u * bs + hop)
     }
     g.globalAlpha = 1
   }
 
-  private drawSplat(g: CanvasRenderingContext2D, w: number, h: number, stops: string[]): void {
+  private drawSplat(
+    g: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    stops: string[],
+    birdSize = 1
+  ): void {
     const u = h / 1080
     const W = Math.max(1, Math.floor(w))
     const H = Math.max(1, Math.floor(h))
@@ -504,7 +513,7 @@ export class Flock {
 
     const fly = abgr(stops[4], 0.78)
     const perch = abgr(stops[4], 0.92)
-    const block = Math.max(1, Math.min(3, Math.round(2.2 * u)))
+    const block = Math.max(1, Math.min(5, Math.round(2.2 * u * birdSize)))
 
     for (let i = 0; i < this.n; i++) {
       const perched = this.state[i] === PERCHED

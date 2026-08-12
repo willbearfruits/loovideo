@@ -49,6 +49,8 @@ export interface TreeDrive {
   /** rendering style: ink (core+halo), brush (jittered passes + dry-brush
    * twigs), hairline (one delicate weight, no halo) */
   stroke: string
+  /** leaf sprite scale, 0.3..3 — modulatable */
+  leafSize: number
 }
 
 /**
@@ -1265,7 +1267,7 @@ export class Tree {
       // foliage reads as MASS first, leaves second: every few tips carry a
       // soft tone blob underneath, and the drawn leaves become edge detail
       const disc = getGlowDisc(stops[2])
-      const base = 5.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3) * season.size
+      const base = 5.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3) * season.size * d.leafSize
       const mature = 6 // SECONDS for a leaf to reach full size
       const budget = 4000
       const step = Math.max(1, Math.ceil(this.tipCount / budget))
@@ -1302,7 +1304,7 @@ export class Tree {
     // falling leaves — outline sprites tumbling, keeping the season's colour
     {
       const spr = getLeafSprites(stops[season.stop])
-      const D = 6.5 * u
+      const D = 6.5 * u * d.leafSize
       for (const L of this.falling) {
         const idx = ((Math.floor(L.phase * 2.5) % spr.count) + spr.count) % spr.count
         g.globalAlpha = 0.7 * Math.min(1, L.life) * alpha
@@ -1435,7 +1437,7 @@ export class Tree {
       }
       g.stroke()
       // a small leaf at the strand's free end
-      const D = 4.6 * u * (0.7 + hash)
+      const D = 4.6 * u * (0.7 + hash) * d.leafSize
       const idx = (i + Math.floor(t * 1.5)) % spr.count
       g.drawImage(spr.canvas, idx * spr.cell, 0, spr.cell, spr.cell, x - D / 2, y - D / 2, D, D)
     }
