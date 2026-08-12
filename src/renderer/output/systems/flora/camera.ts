@@ -21,6 +21,34 @@ export class FloraCamera {
   private started = false
   private driftT = Math.random() * 100
 
+  /** manual override: pan/zoom gestures take the wheel until reset */
+  manual = false
+  private mx = 0
+  private my = 0
+  private mz = 1
+
+  /** engage/adjust manual control; deltas are in world px / zoom factor */
+  nudge(panX: number, panY: number, zoomMul: number): void {
+    if (!this.manual) {
+      this.manual = true
+      this.mx = this.fx
+      this.my = this.fy
+      this.mz = this.zoom
+    }
+    this.mx += panX
+    this.my += panY
+    this.mz = Math.min(24, Math.max(0.15, this.mz * zoomMul))
+  }
+
+  release(): void {
+    this.manual = false
+  }
+
+  /** the target the update loop should chase when manual is engaged */
+  manualTarget(): CamTarget {
+    return { fx: this.mx, fy: this.my, zoom: this.mz }
+  }
+
   update(dt: number, target: CamTarget, onset: number): void {
     if (!this.started) {
       this.started = true

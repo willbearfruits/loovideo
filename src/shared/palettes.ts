@@ -10,7 +10,15 @@ export const PALETTES: Record<string, string[]> = {
   // raster-noton: black field, grey structure, white signal, red accent at peak
   noto: ['#050505', '#2e2e2e', '#7a7a7a', '#f2f2f2', '#ff1e1e'],
   // ink on paper: light background, marks get darker as they get "brighter"
-  ink: ['#f2efe6', '#c9c3b2', '#8c8578', '#403c34', '#0f0e0b']
+  ink: ['#f2efe6', '#c9c3b2', '#8c8578', '#403c34', '#0f0e0b'],
+  // 'custom' is LIVE-EDITED: net clients overwrite these stops in place from
+  // state.customPalette, so every lookup sees the current user colors
+  custom: ['#06080a', '#24404a', '#4a8a7a', '#9fe0b0', '#fff6d8']
+}
+
+/** Overwrite the 'custom' entry in place (called by net mirrors on update). */
+export function setCustomPalette(stops: string[]): void {
+  if (Array.isArray(stops) && stops.length === 5) PALETTES.custom = [...stops]
 }
 
 /** Perceived luminance 0..1 of a hex color. */

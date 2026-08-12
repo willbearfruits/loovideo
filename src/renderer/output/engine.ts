@@ -17,8 +17,16 @@ import { AudioEngine } from './audio'
 import { Webcam } from './webcam'
 import { GradeShader } from './fx'
 import { SceneFade } from './fade'
+import { GlitchPass } from './glitchpass'
+import { Recorder } from './record'
 import { LayersPass } from './layers'
-import { Params, type LayerBlend, type StoryCtx, type VisualSystem } from './systems/types'
+import {
+  Params,
+  type LayerBlend,
+  type StageInput,
+  type StoryCtx,
+  type VisualSystem
+} from './systems/types'
 import { Story } from './story'
 import { CharactersSystem } from './systems/characters'
 import { ParticlesSystem } from './systems/particles'
@@ -59,6 +67,12 @@ export class Engine {
   private prevFlashRaw = 0
   private storyCtx: StoryCtx = { on: false, cam: 'auto' }
   private story!: Story
+  private glitch = new GlitchPass()
+  private recorder = new Recorder()
+  private prevRecord = false
+  private stageInput: StageInput = { place: null, cam: null }
+  private previewCanvas: HTMLCanvasElement | null = null
+  private lastPreview = 0
 
   constructor(
     private net: OutputNet,
@@ -89,6 +103,7 @@ export class Engine {
     this.composer.addPass(this.afterimage)
     this.composer.addPass(this.bloom)
     this.composer.addPass(this.rgbShift)
+    this.composer.addPass(this.glitch)
     this.composer.addPass(this.grade)
     this.composer.addPass(new OutputPass())
 
@@ -97,9 +112,24 @@ export class Engine {
       webcam: this.webcam,
       quality: () => ({ ...this.net.state.quality, ...QUALITY_TIERS[this.net.state.quality.preset] }),
       story: this.storyCtx,
+      input: this.stageInput,
       setParam: (id: string, value: ParamValue) => this.net.send({ t: 'set', id, value })
     }
     this.story = new Story(this.net, this.storyCtx)
+
+    // stage interaction arriving over the wire (control preview, phone, CLI)
+    this.net.onPlace = (kind, x, y) => {
+      this.stageInput.place = { kind, x, y }
+    }
+    this.net.onCam = (m) => {
+      const c = this.stageInput.cam ?? { panX: 0, panY: 0, zoom: 1, reset: false }
+      c.panX += m.panX ?? 0
+      c.panY += m.panY ?? 0
+      c.zoom *= m.zoom ?? 1
+      c.reset = c.reset || !!m.reset
+      this.stageInput.cam = c
+    }
+    this.bindGestures()
     this.systems = {
       chars: new CharactersSystem(),
       parts: new ParticlesSystem(),
@@ -113,6 +143,77 @@ export class Engine {
     })
     this.resize()
     requestAnimationFrame((t) => this.loop(t))
+  }
+
+  /**
+   * The output window is itself a stage: drag pans, wheel/pinch zooms,
+   * a clean tap plants a tree under your finger, double-tap resets the
+   * camera to the auto-frame. (Full multi-touch on the Ally screen.)
+   */
+  private bindGestures(): void {
+    const el = this.renderer.domElement
+    const pts = new Map<number, { x: number; y: number }>()
+    let moved = 0
+    let downT = 0
+    const camAcc = (): NonNullable<StageInput['cam']> => {
+      const c = this.stageInput.cam ?? { panX: 0, panY: 0, zoom: 1, reset: false }
+      this.stageInput.cam = c
+      return c
+    }
+    el.addEventListener('pointerdown', (e) => {
+      el.setPointerCapture(e.pointerId)
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (pts.size === 1) {
+        moved = 0
+        downT = performance.now()
+      }
+    })
+    el.addEventListener('pointermove', (e) => {
+      const p = pts.get(e.pointerId)
+      if (!p) return
+      const dx = e.clientX - p.x
+      const dy = e.clientY - p.y
+      if (pts.size === 1) {
+        const c = camAcc()
+        c.panX += dx / window.innerWidth
+        c.panY += dy / window.innerHeight
+      } else if (pts.size === 2) {
+        const [a, b] = [...pts.values()]
+        const before = Math.hypot(a.x - b.x, a.y - b.y) || 1
+        const ax = e.pointerId === [...pts.keys()][0] ? e.clientX : a.x
+        // recompute with this pointer moved
+        p.x = e.clientX
+        p.y = e.clientY
+        const [a2, b2] = [...pts.values()]
+        const after = Math.hypot(a2.x - b2.x, a2.y - b2.y) || 1
+        camAcc().zoom *= after / before
+        moved += Math.abs(dx) + Math.abs(dy)
+        void ax
+        return
+      }
+      p.x = e.clientX
+      p.y = e.clientY
+      moved += Math.abs(dx) + Math.abs(dy)
+    })
+    const up = (e: PointerEvent): void => {
+      pts.delete(e.pointerId)
+      if (pts.size === 0 && moved < 8 && performance.now() - downT < 350) {
+        this.stageInput.place = {
+          kind: 'tree',
+          x: e.clientX / window.innerWidth,
+          y: e.clientY / window.innerHeight
+        }
+      }
+    }
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', (e) => pts.delete(e.pointerId))
+    el.addEventListener('wheel', (e) => {
+      camAcc().zoom *= Math.pow(1.1, -e.deltaY / 100)
+      e.preventDefault()
+    })
+    el.addEventListener('dblclick', () => {
+      camAcc().reset = true
+    })
   }
 
   private resize(): void {
@@ -296,6 +397,16 @@ export class Engine {
     this.rgbShift.uniforms['amount'].value = shift * 0.014
     this.rgbShift.uniforms['angle'].value = 0.6 + Math.sin(this.scaledTime * 0.31) * 0.5
 
+    // glitch rack: mosh / sort / corrupt — pass disabled entirely when idle
+    const gm = p.num('fx.mosh')
+    const gs = p.num('fx.sort')
+    const gc = p.num('fx.corrupt')
+    this.glitch.enabled = gm + gs + gc > 0.004
+    this.glitch.uniforms.uMosh.value = gm
+    this.glitch.uniforms.uSort.value = gs
+    this.glitch.uniforms.uCorrupt.value = gc
+    this.glitch.uniforms.uTime.value = this.scaledTime
+
     const gu = this.grade.uniforms as typeof GradeShader.uniforms
     gu.uBrightness.value =
       (p.bool('master.blackout') ? 0 : p.num('master.brightness')) * this.story.overrides.brightnessMul
@@ -313,7 +424,19 @@ export class Engine {
     if (this.flashStamps.length > 3) flash = Math.min(flash, 0.18)
     gu.uFlash.value = flash
     gu.uInvert.value = p.bool('fx.invert') ? 1 : 0
+    gu.uHue.value = p.num('fx.hue') * Math.PI
+    gu.uSat.value = p.num('fx.saturation')
+    gu.uContrast.value = p.num('fx.contrast')
     gu.uTime.value = this.scaledTime
+
+    // recording follows the param edge, so any client can start a take
+    const wantRec = st.values['master.record'] === true
+    if (wantRec && !this.prevRecord) {
+      this.recorder.start(this.renderer.domElement, this.audio.mediaStream)
+    } else if (!wantRec && this.prevRecord) {
+      this.recorder.stop()
+    }
+    this.prevRecord = wantRec
 
     this.fade.update(renderDt)
     this.composer.render()
@@ -331,6 +454,26 @@ export class Engine {
         story: this.story.info
       })
       this.updateHud(audioFrame.level)
+    }
+
+    // stage preview: a small JPEG of the live frame for the control surface
+    if (now - this.lastPreview > 160) {
+      this.lastPreview = now
+      const src = this.renderer.domElement
+      if (src.width > 0) {
+        if (!this.previewCanvas) this.previewCanvas = document.createElement('canvas')
+        const pw = 384
+        const ph = Math.max(1, Math.round((src.height / src.width) * pw))
+        if (this.previewCanvas.width !== pw || this.previewCanvas.height !== ph) {
+          this.previewCanvas.width = pw
+          this.previewCanvas.height = ph
+        }
+        const pctx = this.previewCanvas.getContext('2d')
+        if (pctx) {
+          pctx.drawImage(src, 0, 0, pw, ph)
+          this.net.send({ t: 'preview', data: this.previewCanvas.toDataURL('image/jpeg', 0.55) })
+        }
+      }
     }
   }
 

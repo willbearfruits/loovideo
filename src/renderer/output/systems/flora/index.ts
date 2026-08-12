@@ -318,12 +318,61 @@ export class FloraSystem implements VisualSystem {
         }
       }
 
+      // stage interaction: manual camera gestures and tap-to-place, arriving
+      // from the output window itself or the control preview
+      const inp = this.ctx.input
+      if (inp.cam) {
+        if (inp.cam.reset) this.cam.release()
+        else {
+          const Z = Math.max(0.05, this.fitScale * this.cam.currentZoom)
+          this.cam.nudge((-inp.cam.panX * w) / Z, (-inp.cam.panY * h) / Z, inp.cam.zoom)
+        }
+        inp.cam = null
+      }
+      if (inp.place) {
+        const Z = Math.max(0.05, this.fitScale * this.cam.currentZoom)
+        const cx = inp.place.x * w
+        const cy = inp.place.y * h
+        if (inp.place.kind === 'birds') {
+          this.flock.spawnBurst(cx, cy, h / 1080)
+        } else if (this.treeSpec) {
+          // through the camera: screen point → world ground position
+          const wx = this.cam.focusX + (cx - w / 2) / Z
+          if (this.trees.length < MAX_TREES) {
+            const t = new Tree()
+            this.treeScales.push(this.plantSprout(t, wx))
+            this.trees.push(t)
+            this.treeFade.push(0)
+          } else {
+            // full stand: the nearest tree yields its ground to a new sapling
+            let best = 0
+            let bestD = Infinity
+            for (let i = 0; i < this.trees.length; i++) {
+              const dd = Math.abs(this.trees[i].origin.x - wx)
+              if (dd < bestD) {
+                bestD = dd
+                best = i
+              }
+            }
+            this.plantTree(this.trees[best], best, this.trees.length, wx)
+            this.treeFade[best] = 0
+          }
+        }
+        inp.place = null
+      }
+
       // the camera sits on top of the auto-frame: same fit, but the story can
-      // choose the focus — wide, seed push-in, a slow drift, or one leaf down
+      // choose the focus — wide, seed push-in, a slow drift, or one leaf down.
+      // Manual gestures override everything until a double-tap/reset.
       const mode = this.ctx.story.on ? this.ctx.story.cam : 'auto'
       const camT: CamTarget = { fx: cxTree, fy: horizonY, zoom: 1 }
       let anchorY = horizonY
-      if (mode === 'drift') {
+      if (this.cam.manual) {
+        const m = this.cam.manualTarget()
+        camT.fx = m.fx
+        camT.fy = m.fy
+        camT.zoom = m.zoom
+      } else if (mode === 'drift') {
         camT.fx += this.cam.driftOffset(Math.max(80, (maxX - minX) * 0.5))
         camT.zoom = 1.06
       } else if (mode === 'seed' && this.trees[0]) {

@@ -33,6 +33,11 @@ export type ClientMessage =
   | { t: 'preset.delete'; name: string }
   | { t: 'preset.cycle'; dir: number }
   | { t: 'window'; fullscreen?: boolean; display?: number }
+  // stage interaction: relayed by the hub to the output renderer
+  | { t: 'place'; kind: 'tree' | 'birds'; x: number; y: number } // normalized 0..1
+  | { t: 'cam'; panX?: number; panY?: number; zoom?: number; reset?: boolean }
+  | { t: 'palette'; stops: string[] } // 5 hex stops for the 'custom' palette
+  | { t: 'preview'; data: string } // output → hub → controls: tiny JPEG data URL
   | {
       t: 'telemetry'
       fps: number
@@ -54,6 +59,10 @@ export type ServerMessage =
   | { t: 'device'; kind: 'audio' | 'video'; deviceId: string | null }
   | { t: 'quality'; quality: QualityState }
   | { t: 'presets'; names: string[] }
+  | { t: 'place'; kind: 'tree' | 'birds'; x: number; y: number }
+  | { t: 'cam'; panX?: number; panY?: number; zoom?: number; reset?: boolean }
+  | { t: 'palette'; stops: string[] }
+  | { t: 'preview'; data: string }
   | {
       t: 'telemetry'
       fps: number

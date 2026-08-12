@@ -32,14 +32,18 @@ class ControlNet {
     spectrum: [],
     story: null
   }
+  /** latest stage preview frame (JPEG data URL from the output) */
+  preview: string | null = null
   connected = false
   port: string
 
   private ws: WebSocket | null = null
   private stateVersion = 0
   private telemetryVersion = 0
+  private previewVersion = 0
   private stateListeners = new Set<() => void>()
   private telemetryListeners = new Set<() => void>()
+  private previewListeners = new Set<() => void>()
 
   constructor() {
     this.port = new URLSearchParams(location.search).get('port') ?? String(DEFAULT_WS_PORT)
@@ -142,6 +146,14 @@ class ControlNet {
       case 'devices':
         this.devices = { audio: msg.audio, video: msg.video }
         break
+      case 'preview':
+        this.preview = msg.data
+        this.previewVersion++
+        for (const l of this.previewListeners) l()
+        return
+      case 'palette':
+        this.state.customPalette = msg.stops
+        break
       case 'telemetry':
         this.telemetry = {
           fps: msg.fps,
@@ -175,6 +187,11 @@ class ControlNet {
     return () => this.telemetryListeners.delete(l)
   }
   getTelemetryVersion = (): number => this.telemetryVersion
+  subscribePreview = (l: () => void): (() => void) => {
+    this.previewListeners.add(l)
+    return () => this.previewListeners.delete(l)
+  }
+  getPreviewVersion = (): number => this.previewVersion
 }
 
 export const net = new ControlNet()
@@ -188,4 +205,10 @@ export function useNetState(): number {
 export function useTelemetry(): Telemetry {
   useSyncExternalStore(net.subscribeTelemetry, net.getTelemetryVersion)
   return net.telemetry
+}
+
+/** Re-render on each preview frame — use only in the stage preview. */
+export function usePreview(): string | null {
+  useSyncExternalStore(net.subscribePreview, net.getPreviewVersion)
+  return net.preview
 }

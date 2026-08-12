@@ -3,6 +3,7 @@
 
 import { app, BrowserWindow, screen, session } from 'electron'
 import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
 import { ParamStore } from './store'
 import { Hub } from './server'
 import { DEFAULT_WS_PORT } from '../shared/protocol'
@@ -198,6 +199,14 @@ app.whenReady().then(() => {
   // grant mic + webcam without a Chromium prompt (there is no prompt UI here)
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
     cb(permission === 'media')
+  })
+
+  // recordings download silently into Videos/loovideo — stopping a take IS
+  // saving it, no dialog mid-performance
+  session.defaultSession.on('will-download', (_e, item) => {
+    const dir = join(app.getPath('videos'), 'loovideo')
+    mkdirSync(dir, { recursive: true })
+    item.setSavePath(join(dir, item.getFilename()))
   })
 
   store = new ParamStore(app.getPath('userData'))

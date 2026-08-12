@@ -44,6 +44,12 @@ export class Params {
   }
 }
 
+/** One-shot stage interaction, written by the engine, consumed by systems. */
+export interface StageInput {
+  place: { kind: 'tree' | 'birds'; x: number; y: number } | null
+  cam: { panX: number; panY: number; zoom: number; reset: boolean } | null
+}
+
 /** Live directives from the story director, mutated in place by the engine. */
 export interface StoryCtx {
   on: boolean
@@ -57,6 +63,7 @@ export interface SystemCtx {
   webcam: Webcam
   quality: () => QualityState & QualityTier
   story: StoryCtx
+  input: StageInput
   /**
    * Push a parameter change back to the hub. For momentary controls: the UI
    * sets a flag, the system acts on the rising edge and clears it here, so the

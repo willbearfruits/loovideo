@@ -131,6 +131,27 @@ export class Flock {
   private splatW = 0
   private splatH = 0
 
+  private burstCursor = 0
+
+  /** Summon part of the flock to a point (stage tap): birds burst outward. */
+  spawnBurst(x: number, y: number, u: number): void {
+    if (this.n === 0) return
+    const n = Math.max(10, Math.floor(this.n * 0.12))
+    for (let k = 0; k < n; k++) {
+      const i = this.burstCursor++ % this.n
+      const a = Math.random() * Math.PI * 2
+      const r = Math.random() * 46 * u
+      this.px[i] = x + Math.cos(a) * r
+      this.py[i] = y + Math.sin(a) * r
+      const s = (90 + Math.random() * 130) * u
+      this.vx[i] = Math.cos(a) * s
+      this.vy[i] = Math.sin(a) * s
+      this.state[i] = FLY
+      this.panic[i] = 0.35
+      this.takeoff[i] = 0
+    }
+  }
+
   resize(count: number, w: number, h: number): void {
     if (count === this.n) return
     const old = this.n

@@ -10,7 +10,8 @@ import {
   type QualityPreset
 } from '../../shared/params'
 import { FACTORY_PRESETS } from '../../shared/factoryPresets'
-import { net, useNetState, useTelemetry } from './net'
+import { net, useNetState, usePreview, useTelemetry } from './net'
+import { useRef } from 'react'
 import { Fader, HSlider, Segmented, Spectrum, Toggle } from './components'
 
 const SOURCE_LABELS: Record<ModSource, string> = {
@@ -437,6 +438,118 @@ export function SetupPanel(): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
+
+export function StagePanel(): JSX.Element {
+  useNetState()
+  const preview = usePreview()
+  const [tool, setTool] = useState<'pan' | 'tree' | 'birds'>('pan')
+  const box = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ id: number; x: number; y: number } | null>(null)
+  const moved = useRef(0)
+
+  const norm = (e: { clientX: number; clientY: number }): { x: number; y: number } | null => {
+    const r = box.current?.getBoundingClientRect()
+    if (!r) return null
+    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }
+  }
+
+  const rec = net.state.values['master.record'] === true
+  const stops = net.state.customPalette ?? []
+
+  return (
+    <>
+      <div className="block">
+        <h3>STAGE · drag pans · wheel zooms · tap places</h3>
+        <div
+          ref={box}
+          className="stage-preview"
+          onPointerDown={(e) => {
+            box.current?.setPointerCapture(e.pointerId)
+            drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY }
+            moved.current = 0
+          }}
+          onPointerMove={(e) => {
+            const d = drag.current
+            if (!d || d.id !== e.pointerId) return
+            const r = box.current?.getBoundingClientRect()
+            if (!r) return
+            const dx = (e.clientX - d.x) / r.width
+            const dy = (e.clientY - d.y) / r.height
+            d.x = e.clientX
+            d.y = e.clientY
+            moved.current += Math.abs(dx) + Math.abs(dy)
+            if (tool === 'pan') net.send({ t: 'cam', panX: dx, panY: dy })
+          }}
+          onPointerUp={(e) => {
+            const d = drag.current
+            drag.current = null
+            if (!d || moved.current > 0.02) return
+            const p = norm(e)
+            if (!p) return
+            if (tool === 'tree') net.send({ t: 'place', kind: 'tree', x: p.x, y: p.y })
+            else if (tool === 'birds') net.send({ t: 'place', kind: 'birds', x: p.x, y: p.y })
+          }}
+          onWheel={(e) => net.send({ t: 'cam', zoom: Math.pow(1.1, -e.deltaY / 100) })}
+        >
+          {preview ? (
+            <img src={preview} alt="" draggable={false} />
+          ) : (
+            <div className="stage-empty">waiting for the output…</div>
+          )}
+          {rec && <div className="rec-dot">● REC</div>}
+        </div>
+        <div className="row" style={{ marginTop: 10 }}>
+          <Segmented
+            options={['pan', 'tree', 'birds']}
+            labels={['✥ PAN', '🌳 TREE', 'birds ✧']}
+            value={tool}
+            onChange={(v) => setTool(v as typeof tool)}
+          />
+          <button className="add-btn" onClick={() => net.send({ t: 'cam', zoom: 1.25 })}>
+            +
+          </button>
+          <button className="add-btn" onClick={() => net.send({ t: 'cam', zoom: 0.8 })}>
+            −
+          </button>
+          <button className="add-btn" onClick={() => net.send({ t: 'cam', reset: true })}>
+            AUTO FRAME
+          </button>
+          <Toggle
+            label={rec ? 'RECORDING' : 'RECORD'}
+            on={rec}
+            danger
+            onChange={(v) => net.set('master.record', v)}
+          />
+        </div>
+        <p className="hint">
+          The output window itself takes the same gestures: drag pans, pinch/wheel zooms, tap
+          plants a tree, double-tap returns to the auto-frame. Recordings save to
+          Videos/loovideo.
+        </p>
+      </div>
+
+      <div className="block">
+        <h3>CUSTOM PALETTE · select “custom” in any system</h3>
+        <div className="row">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <input
+              key={i}
+              type="color"
+              className="swatch"
+              value={stops[i] ?? '#888888'}
+              onChange={(e) => {
+                const next = [...stops]
+                next[i] = e.target.value
+                net.send({ t: 'palette', stops: next })
+              }}
+            />
+          ))}
+          <span className="hint">bg · low · mid · high · accent</span>
+        </div>
+      </div>
+    </>
+  )
+}
 
 export function HeaderMeters(): JSX.Element {
   const t = useTelemetry()

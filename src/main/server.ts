@@ -136,6 +136,18 @@ export class Hub {
       case 'window':
         this.hooks.onWindow(msg)
         break
+      case 'place':
+      case 'cam':
+        // stage interaction goes to the renderer that owns the world
+        this.broadcast({ ...msg }, { except: client, roles: ['output'] })
+        break
+      case 'palette':
+        if (this.store.setPalette(msg.stops)) this.broadcast({ t: 'palette', stops: msg.stops })
+        break
+      case 'preview':
+        // tiny JPEG frames from the output → whoever is watching the stage
+        this.broadcast({ ...msg }, { except: client, roles: ['control'] })
+        break
       case 'telemetry':
         // output → everyone watching meters; never echoed back to the output
         this.broadcast({ ...msg }, { except: client, roles: ['control', 'cli'] })

@@ -12,6 +12,9 @@ export const GradeShader = {
     uSharpen: { value: 0.0 },
     uFlash: { value: 0.0 },
     uInvert: { value: 0.0 },
+    uHue: { value: 0.0 },
+    uSat: { value: 1.0 },
+    uContrast: { value: 1.0 },
     uTime: { value: 0.0 },
     uRes: { value: [1920, 1080] }
   },
@@ -31,6 +34,9 @@ export const GradeShader = {
     uniform float uSharpen;
     uniform float uFlash;
     uniform float uInvert;
+    uniform float uHue;
+    uniform float uSat;
+    uniform float uContrast;
     uniform float uTime;
     uniform vec2 uRes;
     varying vec2 vUv;
@@ -65,6 +71,16 @@ export const GradeShader = {
 
       float n = hash(vUv * uRes + mod(uTime * 60.0, 1024.0));
       c += (n - 0.5) * uGrain * 0.22 * (0.35 + 0.65 * clamp(c.g + c.r, 0.0, 1.0));
+
+      // color grade: saturation, hue rotation (about the grey axis), contrast
+      c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, uSat);
+      if (abs(uHue) > 0.001) {
+        float ca = cos(uHue);
+        float sa = sin(uHue);
+        vec3 k = vec3(0.57735);
+        c = c * ca + cross(k, c) * sa + k * dot(k, c) * (1.0 - ca);
+      }
+      c = (c - 0.5) * uContrast + 0.5;
 
       // full-frame impulse (route onset here for raster-noton punctuation)
       c = mix(c, vec3(1.0), clamp(uFlash, 0.0, 1.0));

@@ -47,6 +47,8 @@ export class ParamStore {
       if (raw.audioDeviceId !== undefined) s.audioDeviceId = raw.audioDeviceId
       if (raw.videoDeviceId !== undefined) s.videoDeviceId = raw.videoDeviceId
       if (raw.quality) s.quality = { ...s.quality, ...raw.quality }
+      if (Array.isArray(raw.customPalette) && raw.customPalette.length === 5)
+        s.customPalette = raw.customPalette
       return s
     } catch (err) {
       console.error(`[store] failed to load ${path}:`, err)
@@ -107,6 +109,14 @@ export class ParamStore {
   setSystem(id: SystemId): void {
     this.state.system = id
     this.persist()
+  }
+
+  setPalette(stops: string[]): boolean {
+    if (!Array.isArray(stops) || stops.length !== 5) return false
+    if (!stops.every((s) => /^#[0-9a-fA-F]{6}$/.test(s))) return false
+    this.state.customPalette = [...stops]
+    this.persist()
+    return true
   }
 
   setDevice(kind: 'audio' | 'video', deviceId: string | null): void {

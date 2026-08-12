@@ -7,10 +7,11 @@ import {
   ModPanel,
   ScenesPanel,
   SetupPanel,
+  StagePanel,
   SystemPanel
 } from './panels'
 
-const TABS = ['SYSTEM', 'MIX', 'AUDIO', 'MOD', 'SCENES', 'SETUP'] as const
+const TABS = ['STAGE', 'SYSTEM', 'MIX', 'AUDIO', 'MOD', 'SCENES', 'SETUP'] as const
 type Tab = (typeof TABS)[number]
 
 export function App(): JSX.Element {
@@ -26,6 +27,7 @@ export function App(): JSX.Element {
         <HeaderMeters />
       </header>
       <main className="content">
+        {tab === 'STAGE' && <StagePanel />}
         {tab === 'SYSTEM' && <SystemPanel />}
         {tab === 'MIX' && <MixPanel />}
         {tab === 'AUDIO' && <AudioPanel />}

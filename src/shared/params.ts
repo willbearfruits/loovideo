@@ -59,7 +59,7 @@ const e = (
   group: string
 ): EnumParam => ({ kind: 'enum', id, label, options, def, group })
 
-export const PALETTE_NAMES = ['phosphor', 'amber', 'ice', 'magma', 'mono', 'vapor', 'noto', 'ink']
+export const PALETTE_NAMES = ['phosphor', 'amber', 'ice', 'magma', 'mono', 'vapor', 'noto', 'ink', 'custom']
 
 export const PARAMS: ParamDef[] = [
   // ---- master ----
@@ -91,6 +91,13 @@ export const PARAMS: ParamDef[] = [
   n('fx.vignette', 'Vignette', 0, 1, 0.35, 'fx'),
   n('fx.flash', 'Flash', 0, 1, 0, 'fx'),
   b('fx.invert', 'Invert Frame', false, 'fx'),
+  n('fx.hue', 'Hue Rotate', -1, 1, 0, 'fx'),
+  n('fx.saturation', 'Saturation', 0, 2, 1, 'fx'),
+  n('fx.contrast', 'Contrast', 0.5, 1.8, 1, 'fx'),
+  n('fx.mosh', 'Mosh', 0, 1, 0, 'fx'),
+  n('fx.sort', 'Pixel Sort', 0, 1, 0, 'fx'),
+  n('fx.corrupt', 'Corrupt', 0, 1, 0, 'fx'),
+  b('master.record', 'Record ●', false, 'master'),
 
   // ---- audio analysis ----
   b('audio.enabled', 'Audio Input', true, 'audio'),
@@ -282,6 +289,8 @@ export interface ParamState {
   audioDeviceId: string | null
   videoDeviceId: string | null
   quality: QualityState
+  /** the editable 5-stop 'custom' palette */
+  customPalette: string[]
 }
 
 export function defaultState(): ParamState {
@@ -304,7 +313,8 @@ export function defaultState(): ParamState {
     system: 'chars',
     audioDeviceId: null,
     videoDeviceId: null,
-    quality: { preset: 'high', renderScale: 1, fpsCap: 0, msaa: 0 }
+    quality: { preset: 'high', renderScale: 1, fpsCap: 0, msaa: 0 },
+    customPalette: ['#06080a', '#24404a', '#4a8a7a', '#9fe0b0', '#fff6d8']
   }
 }
 

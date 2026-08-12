@@ -2,6 +2,7 @@
 // hub and reconnects forever (the show must survive a hub restart).
 
 import { defaultState, type ParamState } from '../../shared/params'
+import { setCustomPalette } from '../../shared/palettes'
 import {
   parseMessage,
   DEFAULT_WS_PORT,
@@ -17,6 +18,10 @@ export class OutputNet {
   /** called just before a scene change lands (preset load / system switch),
    * with the fade duration to use — the engine freezes the outgoing frame */
   onSceneChange: ((duration: number) => void) | null = null
+  /** stage interaction relayed from the hub */
+  onPlace: ((kind: 'tree' | 'birds', x: number, y: number) => void) | null = null
+  onCam: ((msg: { panX?: number; panY?: number; zoom?: number; reset?: boolean }) => void) | null =
+    null
   private gotFirstState = false
   private ws: WebSocket | null = null
   private url: string
@@ -58,6 +63,7 @@ export class OutputNet {
         }
         this.gotFirstState = true
         this.state = msg.state
+        if (msg.state.customPalette) setCustomPalette(msg.state.customPalette)
         this.stateEpoch++
         break
       }
@@ -83,6 +89,16 @@ export class OutputNet {
         break
       case 'quality':
         s.quality = msg.quality
+        break
+      case 'palette':
+        s.customPalette = msg.stops
+        setCustomPalette(msg.stops)
+        break
+      case 'place':
+        this.onPlace?.(msg.kind, msg.x, msg.y)
+        break
+      case 'cam':
+        this.onCam?.(msg)
         break
       default:
         break

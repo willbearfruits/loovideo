@@ -434,6 +434,50 @@ input[type='text'] {
   font: 12px system-ui, sans-serif;
   margin-top: 8px;
 }
+
+/* ---- stage ---- */
+.stage-preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
+}
+.stage-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+  font: 12px ui-monospace, monospace;
+}
+.rec-dot {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: var(--warn);
+  font: 700 12px ui-monospace, monospace;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+}
+.swatch {
+  width: 52px;
+  height: 46px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+}
 code {
   font: 12px ui-monospace, monospace;
   color: var(--accent2);

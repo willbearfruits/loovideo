@@ -118,6 +118,11 @@ export class AudioEngine {
     this.running = false
   }
 
+  /** The live input stream, for recording alongside the picture. */
+  get mediaStream(): MediaStream | null {
+    return this.stream
+  }
+
   /** Enumerate devices; only meaningful after one successful getUserMedia. */
   async listDevices(): Promise<{ audio: MediaDeviceInfo[]; video: MediaDeviceInfo[] }> {
     const all = await navigator.mediaDevices.enumerateDevices()
