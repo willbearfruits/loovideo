@@ -246,7 +246,9 @@ export class FloraSystem implements VisualSystem {
       for (let i = 0; i < this.trees.length; i++) {
         if (this.trees[i].felled) {
           this.treeFade[i] = 0
-          this.plantTree(this.trees[i], i, this.trees.length)
+          // a felled tree regrows WHERE IT STOOD — margin trees stay in the
+          // margins instead of walking back to the centre strip
+          this.plantTree(this.trees[i], i, this.trees.length, this.trees[i].origin.x)
         }
       }
 
@@ -260,7 +262,7 @@ export class FloraSystem implements VisualSystem {
           this.treeFade[i] += dt
           if (this.treeFade[i] >= SUCCESSION_FADE) {
             this.treeFade[i] = 0
-            this.plantTree(this.trees[i], i, this.trees.length)
+            this.plantTree(this.trees[i], i, this.trees.length, this.trees[i].origin.x)
           }
         }
       }
@@ -299,6 +301,11 @@ export class FloraSystem implements VisualSystem {
       // out there, so a long zoom-out becomes a widening woodland.
       const visHalf = w / 2 / Math.max(0.05, this.fitScale)
       if (this.lastRevealW === 0) this.lastRevealW = visHalf * 2
+      // the reveal ratchet must come back DOWN after a fell: when the view
+      // zooms back in (young grove, tight frame), ease the high-water mark
+      // toward the current view so regrowth can trigger margins again
+      if (visHalf * 2 < this.lastRevealW)
+        this.lastRevealW += (visHalf * 2 - this.lastRevealW) * Math.min(1, dt * 0.25)
       if (
         visHalf * 2 > this.lastRevealW * 1.12 &&
         this.trees.length < MAX_TREES &&
@@ -490,7 +497,7 @@ export class FloraSystem implements VisualSystem {
     return scale
   }
 
-  private plantTree(t: Tree, i: number, nTrees: number): void {
+  private plantTree(t: Tree, i: number, nTrees: number, atX?: number): void {
     const s = this.treeSpec
     if (!s) return
     const f = nTrees === 1 ? 0.5 : (i + 0.5) / nTrees
@@ -504,7 +511,7 @@ export class FloraSystem implements VisualSystem {
     const species: TreeKind[] = ['oak', 'pine', 'willow', 'birch']
     const kind: TreeKind =
       s.kind === 'mixed' ? species[(i * 3 + (Math.random() * 4) | 0) % species.length] : s.kind
-    t.reset(s.w, s.h, s.density, s.horizonY, s.w * (f + jitter), scale, s.share, kind)
+    t.reset(s.w, s.h, s.density, s.horizonY, atX ?? s.w * (f + jitter), scale, s.share, kind)
     this.treeScales[i] = scale
   }
 }
