@@ -5,18 +5,17 @@ import {
   HeaderMeters,
   MixPanel,
   ModPanel,
-  ScenesPanel,
   SetupPanel,
   StagePanel,
   SystemPanel
 } from './panels'
 
-const TABS = ['STAGE', 'SYSTEM', 'MIX', 'AUDIO', 'MOD', 'SCENES', 'SETUP'] as const
+const TABS = ['PERFORM', 'DESIGN', 'FX', 'AUDIO', 'MOD', 'SETUP'] as const
 type Tab = (typeof TABS)[number]
 
 export function App(): JSX.Element {
   useNetState()
-  const [tab, setTab] = useState<Tab>('SYSTEM')
+  const [tab, setTab] = useState<Tab>('PERFORM')
   return (
     <div className="app">
       <header className="header">
@@ -27,12 +26,11 @@ export function App(): JSX.Element {
         <HeaderMeters />
       </header>
       <main className="content">
-        {tab === 'STAGE' && <StagePanel />}
-        {tab === 'SYSTEM' && <SystemPanel />}
-        {tab === 'MIX' && <MixPanel />}
+        {tab === 'PERFORM' && <StagePanel />}
+        {tab === 'DESIGN' && <SystemPanel />}
+        {tab === 'FX' && <MixPanel />}
         {tab === 'AUDIO' && <AudioPanel />}
         {tab === 'MOD' && <ModPanel />}
-        {tab === 'SCENES' && <ScenesPanel />}
         {tab === 'SETUP' && <SetupPanel />}
       </main>
       <nav className="tabbar">

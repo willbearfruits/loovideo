@@ -21,6 +21,8 @@ export interface SceneryDrive {
   horizonY: number
   /** 0 midnight · 0.25 dawn · 0.5 noon · 0.75 dusk (wraps) */
   daytime: number
+  /** mirror strength of the lake, 0..1 — modulatable */
+  reflection: number
 }
 
 /**
@@ -101,7 +103,7 @@ export class Scenery {
       const amp = (0.6 + df * 4.2) * u
       const shift =
         Math.sin(y * 0.052 + time * 1.35) * amp + Math.sin(y * 0.019 - time * 0.6) * amp * 0.6
-      g.globalAlpha = 0.38 * (1 - df * 0.75)
+      g.globalAlpha = 0.38 * (1 - df * 0.75) * Math.min(1.8, d.reflection * 1.8)
       g.drawImage(src, 0, srcY, w, strip, shift, hy + y, w, strip)
     }
 
@@ -257,7 +259,7 @@ export class Scenery {
     g.lineWidth = Math.max(1, u)
     g.globalAlpha = 0.5
     g.beginPath()
-    const tufts = 150
+    const tufts = Math.round(w / 7.5) // density holds under backdrop overscan
     for (let i = 0; i < tufts; i++) {
       const x = h1(i * 7 + 11) * w
       const len = (3 + h1(i * 13 + 5) * 7) * u
@@ -299,7 +301,7 @@ export class Scenery {
     // grass tufts with perspective: far = small, dense, pale · near = tall,
     // sparse, darker; all of them leaning into the gusts
     g.lineCap = 'round'
-    const N = 170
+    const N = Math.round(w / 6.5) // density holds under backdrop overscan
     const lean = Math.sin(time * 0.9) * 0.35 + Math.sin(time * 0.37 + 1.7) * 0.25
     for (let i = 0; i < N; i++) {
       const hh = Math.sin(i * 127.1) * 43758.5453

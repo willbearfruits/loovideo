@@ -196,7 +196,8 @@ export const PARAMS: ParamDef[] = [
   // 0 midnight · 0.25 dawn · 0.5 noon · 0.75 dusk · 1 wraps to midnight
   n('flora.daytime', 'Time of Day', 0, 1, 0.5, 'flora'),
   n('flora.fit', 'Auto Frame', 0, 1, 0.7, 'flora', false),
-  n('flora.horizon', 'Horizon', 0.4, 0.95, 0.78, 'flora', false)
+  n('flora.horizon', 'Horizon', 0.4, 0.95, 0.78, 'flora', false),
+  n('flora.reflection', 'Reflection', 0, 1, 0.55, 'flora')
 ]
 
 export const PARAM_MAP: Record<string, ParamDef> = Object.fromEntries(

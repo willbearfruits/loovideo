@@ -46,7 +46,7 @@ export class Params {
 
 /** One-shot stage interaction, written by the engine, consumed by systems. */
 export interface StageInput {
-  place: { kind: 'tree' | 'birds'; x: number; y: number } | null
+  place: { kind: 'tree' | 'birds' | 'fell'; x: number; y: number } | null
   cam: { panX: number; panY: number; zoom: number; reset: boolean } | null
 }
 

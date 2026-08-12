@@ -45,6 +45,8 @@ export class FloraSystem implements VisualSystem {
   private sproutClock = 0
   private marginClock = 0
   private marginFlip = false
+  /** trees felled by the axe tool: removed for good, never replanted */
+  private axed = new WeakSet<Tree>()
   private stars = new Stars()
   private scenery = new Scenery()
   private fauna = new Fauna()
@@ -145,6 +147,7 @@ export class FloraSystem implements VisualSystem {
       leaves: p.num('flora.leaves'),
       leafSize: p.num('flora.leafSize') || 1,
       leafCount: p.num('flora.leafCount') || 1,
+      reflection: p.num('flora.reflection'),
       birdSize: p.num('flora.birdSize') || 1,
       stroke: p.str('flora.stroke') || 'ink',
       kind: (p.str('flora.flockKind') || 'starlings') as FlockKind
@@ -173,13 +176,31 @@ export class FloraSystem implements VisualSystem {
       // scenery skies own the sun/moon arc; stars only bring the moon on bare
       this.stars.draw(g, w, h, time, stops, drive, scene === 'bare')
     }
-    this.scenery.drawBack(g, w, h, scene, stops, drive)
+    // the land is TIED to the camera through a parallax transform: it pans
+    // and zooms with the trees at reduced strength (backdrops move less than
+    // subjects), so manual camera moves read as one world, not a sliding
+    // cut-out. At the default framing this is the identity.
+    const camZ = Math.max(0.05, this.fitScale * this.cam.currentZoom)
+    const bz = Math.pow(camZ, 0.55)
+    const bx = (this.cam.focusX - w / 2) * 0.6
+    const by = (this.cam.focusY - horizonY) * 0.35
+    // OVERSCAN: the land is generated live at 4× the frame width (and deep
+    // below the frame), so pulling the camera far back never reveals the
+    // backdrop's edge — the world simply continues.
+    const OS = 4
+    const wOS = w * OS
+    g.save()
+    g.translate(w / 2, horizonY)
+    g.scale(bz, bz)
+    g.translate(-w / 2 - bx, -horizonY - by)
+    g.translate(-(wOS - w) / 2, 0)
+    this.scenery.drawBack(g, wOS, h, scene, stops, drive)
 
     if (scene !== 'bare' && !wantStars) {
       // the field itself (stars already lays a ground silhouette of its own)
       g.globalAlpha = 1
       g.fillStyle = stops[1]
-      g.fillRect(0, horizonY, w, h - horizonY)
+      g.fillRect(0, horizonY, wOS, h * 2.5 - horizonY)
     }
     if (!wantStars) {
       // ground hairline — the stage the silence narratives land on
@@ -188,11 +209,12 @@ export class FloraSystem implements VisualSystem {
       g.lineWidth = Math.max(1, h / 1080)
       g.beginPath()
       g.moveTo(0, horizonY)
-      g.lineTo(w, horizonY)
+      g.lineTo(wOS, horizonY)
       g.stroke()
       g.globalAlpha = 1
     }
-    this.scenery.drawFront(g, w, h, time, scene, stops, drive)
+    this.scenery.drawFront(g, wOS, h, time, scene, stops, drive)
+    g.restore()
 
     // --- the grove ----------------------------------------------------------
     if (wantTree) {
@@ -242,14 +264,20 @@ export class FloraSystem implements VisualSystem {
         }
       }
 
-      // a felled tree is replanted where it stood, and grows back from nothing
-      for (let i = 0; i < this.trees.length; i++) {
-        if (this.trees[i].felled) {
-          this.treeFade[i] = 0
-          // a felled tree regrows WHERE IT STOOD — margin trees stay in the
-          // margins instead of walking back to the centre strip
-          this.plantTree(this.trees[i], i, this.trees.length, this.trees[i].origin.x)
+      // a felled tree is replanted where it stood, and grows back from
+      // nothing — unless the AXE took it, in which case its ground is freed
+      for (let i = this.trees.length - 1; i >= 0; i--) {
+        if (!this.trees[i].felled) continue
+        if (this.axed.has(this.trees[i])) {
+          this.trees.splice(i, 1)
+          this.treeFade.splice(i, 1)
+          this.treeScales.splice(i, 1)
+          continue
         }
+        this.treeFade[i] = 0
+        // regrow WHERE IT STOOD — margin trees stay in the margins instead
+        // of walking back to the centre strip
+        this.plantTree(this.trees[i], i, this.trees.length, this.trees[i].origin.x)
       }
 
       // Succession: a tree that has hit its node ceiling cannot keep growing,
@@ -335,6 +363,20 @@ export class FloraSystem implements VisualSystem {
         const cy = inp.place.y * h
         if (inp.place.kind === 'birds') {
           this.flock.spawnBurst(cx, cy, h / 1080)
+        } else if (inp.place.kind === 'fell' && this.trees.length > 0) {
+          // the axe: fell ONLY the tapped tree; it does not come back
+          const wx = this.cam.focusX + (cx - w / 2) / Z
+          let best = 0
+          let bestD = Infinity
+          for (let i = 0; i < this.trees.length; i++) {
+            const dd = Math.abs(this.trees[i].origin.x - wx)
+            if (dd < bestD) {
+              bestD = dd
+              best = i
+            }
+          }
+          this.trees[best].fell()
+          this.axed.add(this.trees[best])
         } else if (this.treeSpec) {
           // through the camera: screen point → world ground position
           const wx = this.cam.focusX + (cx - w / 2) / Z
@@ -432,12 +474,15 @@ export class FloraSystem implements VisualSystem {
       drive.perches = this.perchScratch.length > 0 ? this.perchScratch : undefined
     }
 
-    // --- livestock: in front of the field, behind nothing (not in the lake) --
+    // --- livestock: in front of the field, tied to the world camera ---------
     const animals = scene === 'lake' ? 0 : Math.round(p.num('flora.animals'))
     if (animals > 0) {
       this.fauna.resize(animals)
       this.fauna.update(dt, w, h, drive)
+      g.save()
+      this.cam.apply(g, w / 2, horizonY, this.fitScale)
       this.fauna.draw(g, w, h, stops, drive)
+      g.restore()
     }
 
     // --- the birds ----------------------------------------------------------

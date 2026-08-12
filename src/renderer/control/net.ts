@@ -51,7 +51,11 @@ class ControlNet {
   }
 
   private connect(): void {
-    this.ws = new WebSocket(`ws://127.0.0.1:${this.port}`)
+    // same page works in the Electron window (file://, empty hostname) and
+    // on a phone browser served over the network — connect to wherever the
+    // page itself came from
+    const host = location.hostname && location.hostname.length > 0 ? location.hostname : '127.0.0.1'
+    this.ws = new WebSocket(`ws://${host}:${this.port}`)
     this.ws.onopen = () => {
       this.connected = true
       this.send({ t: 'hello', role: 'control' })

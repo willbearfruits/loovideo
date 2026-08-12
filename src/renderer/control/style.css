@@ -435,6 +435,38 @@ input[type='text'] {
   margin-top: 8px;
 }
 
+/* ---- param grid: two columns when there's room ---- */
+.params-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  column-gap: 26px;
+}
+.params-grid .hslider {
+  height: 46px;
+}
+
+.big-btn {
+  all: unset;
+  height: 54px;
+  padding: 0 20px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--text);
+  font: 700 14px system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.big-btn:active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.flash-btn:active {
+  background: var(--text);
+  color: var(--bg);
+}
+
 /* ---- stage ---- */
 .stage-preview {
   position: relative;

@@ -19,7 +19,7 @@ export class OutputNet {
    * with the fade duration to use — the engine freezes the outgoing frame */
   onSceneChange: ((duration: number) => void) | null = null
   /** stage interaction relayed from the hub */
-  onPlace: ((kind: 'tree' | 'birds', x: number, y: number) => void) | null = null
+  onPlace: ((kind: 'tree' | 'birds' | 'fell', x: number, y: number) => void) | null = null
   onCam: ((msg: { panX?: number; panY?: number; zoom?: number; reset?: boolean }) => void) | null =
     null
   private gotFirstState = false

@@ -12,6 +12,7 @@ import {
 import { FACTORY_PRESETS } from '../../shared/factoryPresets'
 import { net, useNetState, usePreview, useTelemetry } from './net'
 import { useRef } from 'react'
+import { armLearn, getMappings, midiState, removeMapping, useMidi } from './midi'
 import { Fader, HSlider, Segmented, Spectrum, Toggle } from './components'
 
 const SOURCE_LABELS: Record<ModSource, string> = {
@@ -59,8 +60,20 @@ function ParamControl({ def }: { def: ParamDef }): JSX.Element {
   }
 }
 
-function Group({ title, group, kinds }: { title: string; group: string; kinds?: string[] }): JSX.Element {
-  const defs = PARAMS.filter((p) => p.group === group && (!kinds || kinds.includes(p.kind)))
+function Group({
+  title,
+  group,
+  kinds,
+  only
+}: {
+  title: string
+  group: string
+  kinds?: string[]
+  /** limit to these param ids (in this order) */
+  only?: string[]
+}): JSX.Element {
+  let defs = PARAMS.filter((p) => p.group === group && (!kinds || kinds.includes(p.kind)))
+  if (only) defs = only.map((id) => defs.find((d) => d.id === id)).filter((d) => !!d)
   const enums = defs.filter((d) => d.kind === 'enum')
   const bools = defs.filter((d) => d.kind === 'bool')
   const nums = defs.filter((d) => d.kind === 'number')
@@ -79,9 +92,11 @@ function Group({ title, group, kinds }: { title: string; group: string; kinds?: 
           ))}
         </div>
       )}
-      {nums.map((d) => (
-        <ParamControl key={d.id} def={d} />
-      ))}
+      <div className="params-grid">
+        {nums.map((d) => (
+          <ParamControl key={d.id} def={d} />
+        ))}
+      </div>
     </div>
   )
 }
@@ -103,6 +118,7 @@ export function SystemPanel(): JSX.Element {
         />
       </div>
       <Group title={SYSTEMS.find((s) => s.id === sys)?.label ?? sys.toUpperCase()} group={sys} />
+      <PaletteEditor />
     </>
   )
 }
@@ -425,12 +441,15 @@ export function SetupPanel(): JSX.Element {
         <p className="hint">Used by CHARACTERS → mode CAM. Devices appear after audio/camera starts.</p>
       </div>
 
+      <MidiBlock />
+
       <div className="block">
         <h3>REMOTE CONTROL</h3>
         <p className="hint">
           WebSocket API on <code>ws://127.0.0.1:{net.port}</code> — CLI:{' '}
-          <code>npm run ctl -- set fx.bloom 0.8</code>. Start with <code>--ws-host=0.0.0.0</code> to
-          allow phone / ESP32 control.
+          <code>npm run ctl -- set fx.bloom 0.8</code>. Start the app with{' '}
+          <code>--ws-host=0.0.0.0</code> and any phone on the network gets this whole surface at{' '}
+          <code>http://&lt;machine-ip&gt;:{Number(net.port) + 1}/</code>.
         </p>
       </div>
     </>
@@ -442,7 +461,7 @@ export function SetupPanel(): JSX.Element {
 export function StagePanel(): JSX.Element {
   useNetState()
   const preview = usePreview()
-  const [tool, setTool] = useState<'pan' | 'tree' | 'birds'>('pan')
+  const [tool, setTool] = useState<'pan' | 'tree' | 'birds' | 'fell'>('pan')
   const box = useRef<HTMLDivElement>(null)
   const drag = useRef<{ id: number; x: number; y: number } | null>(null)
   const moved = useRef(0)
@@ -486,8 +505,7 @@ export function StagePanel(): JSX.Element {
             if (!d || moved.current > 0.02) return
             const p = norm(e)
             if (!p) return
-            if (tool === 'tree') net.send({ t: 'place', kind: 'tree', x: p.x, y: p.y })
-            else if (tool === 'birds') net.send({ t: 'place', kind: 'birds', x: p.x, y: p.y })
+            if (tool !== 'pan') net.send({ t: 'place', kind: tool, x: p.x, y: p.y })
           }}
           onWheel={(e) => net.send({ t: 'cam', zoom: Math.pow(1.1, -e.deltaY / 100) })}
         >
@@ -500,8 +518,8 @@ export function StagePanel(): JSX.Element {
         </div>
         <div className="row" style={{ marginTop: 10 }}>
           <Segmented
-            options={['pan', 'tree', 'birds']}
-            labels={['✥ PAN', '🌳 TREE', 'birds ✧']}
+            options={['pan', 'tree', 'birds', 'fell']}
+            labels={['✥ PAN', '↟ TREE', '⌒ BIRDS', '✕ AXE']}
             value={tool}
             onChange={(v) => setTool(v as typeof tool)}
           />
@@ -522,32 +540,109 @@ export function StagePanel(): JSX.Element {
           />
         </div>
         <p className="hint">
-          The output window itself takes the same gestures: drag pans, pinch/wheel zooms, tap
-          plants a tree, double-tap returns to the auto-frame. Recordings save to
-          Videos/loovideo.
+          The output window takes the same gestures (pan / pinch / double-tap resets), and the
+          gamepad plays too: stick pans, triggers zoom, A tree · Y birds · X axe · B reframe ·
+          LB/RB scenes · Start record.
         </p>
       </div>
 
       <div className="block">
-        <h3>CUSTOM PALETTE · select “custom” in any system</h3>
+        <h3>TRANSPORT</h3>
         <div className="row">
-          {[0, 1, 2, 3, 4].map((i) => (
-            <input
-              key={i}
-              type="color"
-              className="swatch"
-              value={stops[i] ?? '#888888'}
-              onChange={(e) => {
-                const next = [...stops]
-                next[i] = e.target.value
-                net.send({ t: 'palette', stops: next })
-              }}
-            />
-          ))}
-          <span className="hint">bg · low · mid · high · accent</span>
+          <button className="big-btn" onClick={() => net.send({ t: 'preset.cycle', dir: -1 })}>
+            ◀ SCENE
+          </button>
+          <button className="big-btn" onClick={() => net.send({ t: 'preset.cycle', dir: 1 })}>
+            SCENE ▶
+          </button>
+          <Toggle
+            label="BLACKOUT"
+            danger
+            on={net.state.values['master.blackout'] === true}
+            onChange={(v) => net.set('master.blackout', v)}
+          />
+          <button
+            className="big-btn flash-btn"
+            onPointerDown={() => net.set('fx.flash', 0.9)}
+            onPointerUp={() => net.set('fx.flash', 0)}
+            onPointerLeave={() => net.set('fx.flash', 0)}
+          >
+            ⚡ FLASH
+          </button>
         </div>
       </div>
+
+      <ScenesPanel />
     </>
+  )
+}
+
+/** The custom-palette editor: five stops, live to every system. */
+export function PaletteEditor(): JSX.Element {
+  useNetState()
+  const stops = net.state.customPalette ?? []
+  return (
+    <div className="block">
+      <h3>CUSTOM PALETTE · select “custom” in any system</h3>
+      <div className="row">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <input
+            key={i}
+            type="color"
+            className="swatch"
+            value={stops[i] ?? '#888888'}
+            onChange={(e) => {
+              const next = [...stops]
+              next[i] = e.target.value
+              net.send({ t: 'palette', stops: next })
+            }}
+          />
+        ))}
+        <span className="hint">bg · low · mid · high · accent</span>
+      </div>
+    </div>
+  )
+}
+
+function MidiBlock(): JSX.Element {
+  useMidi()
+  useNetState()
+  const [learnTarget, setLearnTarget] = useState('fx.bloom')
+  const numeric = PARAMS.filter((p) => p.kind === 'number' || p.kind === 'bool')
+  return (
+    <div className="block">
+      <h3>MIDI · {midiState.supported ? `${midiState.inputs} input(s)` : 'no access'}</h3>
+      <div className="row">
+        <select value={learnTarget} onChange={(e) => setLearnTarget(e.target.value)}>
+          {numeric.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.id}
+            </option>
+          ))}
+        </select>
+        <button
+          className={midiState.learning ? 'primary-btn' : 'add-btn'}
+          onClick={() => armLearn(midiState.learning ? null : learnTarget)}
+        >
+          {midiState.learning ? 'MOVE A KNOB…' : 'LEARN'}
+        </button>
+        <span className="hint">{midiState.lastCC ?? 'move a controller to see activity'}</span>
+      </div>
+      {getMappings().length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          {getMappings().map((m, i) => (
+            <div className="row" key={`${m.ch}-${m.cc}`} style={{ marginBottom: 6 }}>
+              <code>
+                CC {m.cc} ch {m.ch + 1} → {m.param}
+              </code>
+              <button className="icon-btn" onClick={() => removeMapping(i)}>
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

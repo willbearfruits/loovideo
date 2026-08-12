@@ -73,6 +73,7 @@ export class Engine {
   private stageInput: StageInput = { place: null, cam: null }
   private previewCanvas: HTMLCanvasElement | null = null
   private lastPreview = 0
+  private padPrev: Record<string, boolean> = {}
 
   constructor(
     private net: OutputNet,
@@ -146,9 +147,54 @@ export class Engine {
   }
 
   /**
+   * A gamepad is a performance instrument (the Ally's built-in controls
+   * enumerate as XInput): left stick pans, triggers zoom, B resets the
+   * camera, LB/RB walk the setlist, A plants a tree centre-stage, Y bursts
+   * birds, X is the axe, Start toggles recording.
+   */
+  private pollGamepad(): void {
+    const gp = navigator.getGamepads?.()[0]
+    if (!gp) return
+    const dead = (v: number): number => (Math.abs(v) > 0.18 ? v : 0)
+    const lx = dead(gp.axes[0] ?? 0)
+    const ly = dead(gp.axes[1] ?? 0)
+    const rt = gp.buttons[7]?.value ?? 0
+    const lt = gp.buttons[6]?.value ?? 0
+    if (lx || ly || rt > 0.02 || lt > 0.02) {
+      const c = this.stageInput.cam ?? { panX: 0, panY: 0, zoom: 1, reset: false }
+      c.panX -= lx * 0.011
+      c.panY -= ly * 0.011
+      c.zoom *= 1 + (rt - lt) * 0.025
+      this.stageInput.cam = c
+    }
+    const edge = (idx: number, name: string): boolean => {
+      const now = (gp.buttons[idx]?.pressed ?? false) as boolean
+      const was = this.padPrev[name] ?? false
+      this.padPrev[name] = now
+      return now && !was
+    }
+    if (edge(1, 'b')) {
+      const c = this.stageInput.cam ?? { panX: 0, panY: 0, zoom: 1, reset: false }
+      c.reset = true
+      this.stageInput.cam = c
+    }
+    if (edge(0, 'a')) this.stageInput.place = { kind: 'tree', x: 0.5, y: 0.7 }
+    if (edge(3, 'y')) this.stageInput.place = { kind: 'birds', x: 0.5, y: 0.4 }
+    if (edge(2, 'x')) this.stageInput.place = { kind: 'fell', x: 0.5, y: 0.7 }
+    if (edge(4, 'lb')) this.net.send({ t: 'preset.cycle', dir: -1 })
+    if (edge(5, 'rb')) this.net.send({ t: 'preset.cycle', dir: 1 })
+    if (edge(9, 'start'))
+      this.net.send({
+        t: 'set',
+        id: 'master.record',
+        value: !(this.net.state.values['master.record'] === true)
+      })
+  }
+
+  /**
    * The output window is itself a stage: drag pans, wheel/pinch zooms,
-   * a clean tap plants a tree under your finger, double-tap resets the
-   * camera to the auto-frame. (Full multi-touch on the Ally screen.)
+   * double-tap resets the camera to the auto-frame. (Full multi-touch on
+   * the Ally screen.)
    */
   private bindGestures(): void {
     const el = this.renderer.domElement
@@ -195,17 +241,25 @@ export class Engine {
       p.y = e.clientY
       moved += Math.abs(dx) + Math.abs(dy)
     })
+    // placement lives on the control preview (deliberate tools, no accidents);
+    // the output window is navigation only: pan, pinch, wheel, double-tap
     const up = (e: PointerEvent): void => {
       pts.delete(e.pointerId)
-      if (pts.size === 0 && moved < 8 && performance.now() - downT < 350) {
-        this.stageInput.place = {
-          kind: 'tree',
-          x: e.clientX / window.innerWidth,
-          y: e.clientY / window.innerHeight
-        }
-      }
+      void moved
+      void downT
+      void e
     }
     el.addEventListener('pointerup', up)
+
+    // the cursor shows while the hand is on the stage, hides when idle
+    let lastMove = performance.now()
+    window.addEventListener('pointermove', () => {
+      lastMove = performance.now()
+      document.body.classList.remove('idle')
+    })
+    setInterval(() => {
+      if (performance.now() - lastMove > 2500) document.body.classList.add('idle')
+    }, 800)
     el.addEventListener('pointercancel', (e) => pts.delete(e.pointerId))
     el.addEventListener('wheel', (e) => {
       camAcc().zoom *= Math.pow(1.1, -e.deltaY / 100)
@@ -332,6 +386,7 @@ export class Engine {
     // audio + webcam device management
     this.manageAudio(now)
     this.webcam.setDevice(st.videoDeviceId)
+    this.pollGamepad()
 
     // time: master.speed from last frame's effective values (1-frame lag is fine)
     const speed = this.params.eff['master.speed'] as number | undefined

@@ -3,7 +3,8 @@
 
 import { app, BrowserWindow, screen, session } from 'electron'
 import { join } from 'node:path'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFile } from 'node:fs'
+import { createServer } from 'node:http'
 import { ParamStore } from './store'
 import { Hub } from './server'
 import { DEFAULT_WS_PORT } from '../shared/protocol'
@@ -226,6 +227,36 @@ app.whenReady().then(() => {
     args.wsPort,
     args.wsHost
   )
+
+  // phone control: serve the built control page over plain HTTP on port+1.
+  // With --ws-host=0.0.0.0, any phone on the network opens
+  //   http://<machine-ip>:<port+1>/  and gets the full touch surface.
+  const webRoot = join(import.meta.dirname, '../renderer')
+  const MIME: Record<string, string> = {
+    html: 'text/html',
+    js: 'text/javascript',
+    css: 'text/css',
+    svg: 'image/svg+xml',
+    png: 'image/png'
+  }
+  createServer((req, res) => {
+    const urlPath = (req.url ?? '/').split('?')[0]
+    const rel = urlPath === '/' ? '/control.html' : urlPath
+    const file = join(webRoot, rel)
+    if (!file.startsWith(webRoot)) {
+      res.writeHead(403).end()
+      return
+    }
+    readFile(file, (err, data) => {
+      if (err) {
+        res.writeHead(404)
+        res.end('not built yet — run `npm run build` once to enable phone control')
+        return
+      }
+      res.writeHead(200, { 'Content-Type': MIME[file.split('.').pop() ?? ''] ?? 'application/octet-stream' })
+      res.end(data)
+    })
+  }).listen(args.wsPort + 1, args.wsHost)
 
   createWindows()
 })
