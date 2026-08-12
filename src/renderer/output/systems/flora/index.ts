@@ -43,7 +43,7 @@ export class FloraSystem implements VisualSystem {
   private treeFade: number[] = []
   private treeScales: number[] = []
   private sproutClock = 0
-  private lastRevealW = 0
+  private marginClock = 0
   private marginFlip = false
   private stars = new Stars()
   private scenery = new Scenery()
@@ -204,7 +204,7 @@ export class FloraSystem implements VisualSystem {
         this.trees = []
         this.treeFade = []
         this.treeScales = []
-        this.lastRevealW = 0
+        this.marginClock = 0
         // a grove, not a row of clones: staggered feet, alternating sizes, and
         // the node budget split so the whole stand stays inside the tier
         const share = Math.max(1200, Math.floor(q.treeNodeCap / nTrees))
@@ -295,29 +295,20 @@ export class FloraSystem implements VisualSystem {
       this.fitScale += (eff - this.fitScale) * Math.min(1, dt * 1.6)
       const cxTree = Number.isFinite(minX) ? (minX + maxX) / 2 : w / 2
 
-      // colonize revealed ground: as the frame pulls back, world beyond the
-      // original planting strip comes into view — and the empty margins are
-      // an invitation. Each significant reveal lets one volunteer take root
-      // out there, so a long zoom-out becomes a widening woodland.
+      // colonize revealed ground — STATELESS: no zoom-history ratchet (that
+      // broke on every grove rebuild, since fitScale persists across them).
+      // The question is simply "is there empty visible ground right now?",
+      // asked on a slow clock that runs with the music. If the frame shows
+      // meaningful room beyond the grove's edge, a volunteer takes root out
+      // there; alternating sides widens the woodland symmetrically.
       const visHalf = w / 2 / Math.max(0.05, this.fitScale)
-      if (this.lastRevealW === 0) this.lastRevealW = visHalf * 2
-      // the reveal ratchet must come back DOWN after a fell: when the view
-      // zooms back in (young grove, tight frame), ease the high-water mark
-      // toward the current view so regrowth can trigger margins again
-      if (visHalf * 2 < this.lastRevealW)
-        this.lastRevealW += (visHalf * 2 - this.lastRevealW) * Math.min(1, dt * 0.25)
-      if (
-        visHalf * 2 > this.lastRevealW * 1.12 &&
-        this.trees.length < MAX_TREES &&
-        this.treeSpec &&
-        drive.silence < 0.6
-      ) {
+      this.marginClock += dt * (0.3 + drive.level) * (1 - drive.silence)
+      if (this.marginClock > 10 && this.trees.length < MAX_TREES && this.treeSpec) {
         const groveHalf = Number.isFinite(minX) ? Math.max(1, (maxX - minX) / 2) : w * 0.1
         const margin = visHalf * 0.85 - groveHalf
-        if (margin > w * 0.04) {
-          this.lastRevealW = visHalf * 2
+        if (margin > w * 0.06) {
+          this.marginClock = 0
           const t = new Tree()
-          // alternate sides so the woodland widens symmetrically
           this.marginFlip = !this.marginFlip
           const side = this.marginFlip ? -1 : 1
           const x = cxTree + side * (groveHalf + w * 0.03 + Math.random() * margin)
