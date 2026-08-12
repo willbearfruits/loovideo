@@ -24,7 +24,7 @@
 // through segment midpoints, leaves as stroked outline sprites, and species
 // appendages (willow strand curtains, banyan aerial roots, the bonsai vessel).
 
-import { getLeafSprites } from './leafsprites'
+import { getLeafSprites, getGlowDisc } from './leafsprites'
 
 export interface TreeDrive {
   wind: number
@@ -232,10 +232,12 @@ export class Tree {
 
   // node indices counting-sorted by stroke width, rebuilt only when the tree
   // grows. Drawing then walks one contiguous run per width instead of
-  // re-testing every node four times a frame.
+  // re-testing every node per frame. Eight buckets: enough steps that the
+  // taper reads as continuous (the four-bucket version read as a plotted
+  // graph — the amateur tell the ink research named first).
   private order = new Int32Array(INIT_CAP)
-  private bucketStart = new Int32Array(5)
-  private cursor = new Int32Array(4)
+  private bucketStart = new Int32Array(9)
+  private cursor = new Int32Array(8)
 
   /**
    * @param originX  trunk foot, in canvas px (a grove spreads these out)
@@ -798,9 +800,12 @@ export class Tree {
       this.radiusDirty = false
       const tipR = 1.1 * u
       const trunkCap = h / 42
-      const t0 = 6 * u
-      const t1 = 3 * u
-      const t2 = 1.6 * u
+      // geometric width thresholds, trunk → twig
+      const T = [10, 6.5, 4.2, 2.8, 1.9, 1.35, 0.95].map((v) => v * u)
+      const bucketOf = (r: number): number => {
+        for (let b = 0; b < 7; b++) if (r > T[b]) return b
+        return 7
+      }
       const st = this.bucketStart
       st.fill(0)
       let tips = 0
@@ -822,7 +827,7 @@ export class Tree {
         if (y < by0) by0 = y
         if (y > by1) by1 = y
         if (i === 0) continue
-        st[(r > t0 ? 0 : r > t1 ? 1 : r > t2 ? 2 : 3) + 1]++
+        st[bucketOf(r) + 1]++
         if (this.childCount[i] === 0 && this.depth[i] >= 4) tips++
       }
       if (bx0 <= bx1) {
@@ -832,13 +837,11 @@ export class Tree {
         this.maxY = by1
       }
       this.tipCount = tips
-      for (let b = 0; b < 4; b++) st[b + 1] += st[b]
-      for (let b = 0; b < 4; b++) this.cursor[b] = st[b]
+      for (let b = 0; b < 8; b++) st[b + 1] += st[b]
+      for (let b = 0; b < 8; b++) this.cursor[b] = st[b]
       for (let i = 1; i < this.nNodes; i++) {
         if (!this.alive[i]) continue
-        const r = this.radius[i]
-        const b = r > t0 ? 0 : r > t1 ? 1 : r > t2 ? 2 : 3
-        this.order[this.cursor[b]++] = i
+        this.order[this.cursor[bucketOf(this.radius[i])]++] = i
       }
     }
 
@@ -1034,11 +1037,11 @@ export class Tree {
 
     g.lineCap = 'round'
     g.lineJoin = 'round'
-    const widths = [11 * u, 5.2 * u, 2.6 * u, 1.2 * u]
+    const widths = [13 * u, 8.5 * u, 5.5 * u, 3.6 * u, 2.4 * u, 1.6 * u, 1.1 * u, 0.8 * u]
     // structural branches are always drawn whole; the twig tiers get a segment
     // budget so a canopy that has been growing for an hour costs the same to
     // stroke as one that started ten minutes ago
-    const budget = [Infinity, Infinity, 9000, 12000]
+    const budget = [Infinity, Infinity, Infinity, Infinity, 9000, 9000, 12000, 12000]
     const st = this.bucketStart
 
     // 1) halo: a wide, dim under-glow beneath the structural wood. This is
@@ -1046,10 +1049,14 @@ export class Tree {
     // lifts it further on dark palettes). The alpha adapts to how much
     // structural wood there is — a sapling gets a full halo, a banyan whose
     // whole dome is thick limbs would otherwise wash out into glare.
-    const structN = Math.max(1, st[2] - st[0])
+    const structN = Math.max(1, st[3] - st[0])
+    // glow discipline: damp the halo by how much structural wood there is AND
+    // by camera zoom — a close-up trunk is already physically wide on screen,
+    // and un-damped halo + bloom blows it out to a white blob
+    const zoomDamp = Math.min(1, 1.5 / Math.max(1, fitScale))
     g.strokeStyle = stops[2]
-    g.globalAlpha = 0.16 * alpha * Math.min(1, 340 / structN)
-    for (let b = 0; b < 2; b++) {
+    g.globalAlpha = 0.15 * alpha * Math.min(1, 340 / structN) * zoomDamp
+    for (let b = 0; b < 3; b++) {
       const from = st[b]
       const to = st[b + 1]
       if (to <= from) continue
@@ -1064,18 +1071,22 @@ export class Tree {
       g.stroke()
     }
 
-    // 2) cores: brightness tapers from white-hot trunk to grey twig, and limbs
-    // curve through segment midpoints (control point = the shared node), so
-    // chains read as drawn strokes instead of jointed segments.
-    const coreCols = [stops[4], stops[4], stops[3], stops[3]]
-    const coreAlpha = [0.98, 0.9, 0.72, 0.5]
-    for (let b = 0; b < 4; b++) {
-      if (b === 3 && onScreenSeg <= 0.9) continue // finest tier is sub-pixel
+    // 2) cores: an eight-step tone ladder, trunk bright through grey twig —
+    // the sumi-e five-tones idea stretched over the taper — and limbs curve
+    // through segment midpoints so chains read as drawn strokes, not joints.
+    const coreCols = [
+      stops[4], stops[4], stops[4],
+      stops[3], stops[3], stops[3],
+      stops[2], stops[2]
+    ]
+    const coreAlpha = [0.98, 0.95, 0.9, 0.8, 0.7, 0.6, 0.52, 0.42]
+    for (let b = 0; b < 8; b++) {
+      if (b >= 6 && onScreenSeg <= 0.9) continue // finest tiers are sub-pixel
       const from = st[b]
       const to = st[b + 1]
       if (to <= from) continue
       const stride = Math.max(1, Math.ceil((to - from) / budget[b]))
-      const curved = stride === 1 && b < 3
+      const curved = stride === 1 && b < 6
       g.globalAlpha = coreAlpha[b] * alpha
       g.strokeStyle = coreCols[b]
 
@@ -1127,6 +1138,26 @@ export class Tree {
       g.stroke()
     }
 
+    // 3) the growth frontier: tone 1 is scarce and belongs to what is
+    // happening NOW — segments younger than ~2.2s burn brighter than wood,
+    // so the tree visibly glows where the music is growing it
+    {
+      const young = this.ageSec - 2.2
+      g.strokeStyle = stops[4]
+      g.lineWidth = Math.max(1, 1.4 * u)
+      g.globalAlpha = 0.9 * alpha
+      g.beginPath()
+      let fdrawn = 0
+      for (let i = 1; i < this.nNodes && fdrawn < 1200; i++) {
+        if (!this.alive[i] || this.birthT[i] < young) continue
+        const p = this.parent[i]
+        g.moveTo(this.swayX[p], this.swayY[p])
+        g.lineTo(this.swayX[i], this.swayY[i])
+        fdrawn++
+      }
+      g.stroke()
+    }
+
     if (K.roots) this.drawAerialRoots(g, h, stops, alpha)
     if (K.strands) this.drawStrands(g, h, stops, d, alpha, onScreenSeg)
 
@@ -1139,6 +1170,9 @@ export class Tree {
       // behind the growing frontier instead of the canopy appearing whole —
       // and a freshly regrown tree is visibly bare for a while.
       const spr = getLeafSprites(stops[season.stop])
+      // foliage reads as MASS first, leaves second: every few tips carry a
+      // soft tone blob underneath, and the drawn leaves become edge detail
+      const disc = getGlowDisc(stops[2])
       const base = 5.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3) * season.size
       const mature = 6 // SECONDS for a leaf to reach full size
       const budget = 4000
@@ -1163,6 +1197,11 @@ export class Tree {
         const idx = (((Math.round((rot / TWO_PI) * spr.count) % spr.count) + spr.count) % spr.count)
         const D = base * age * (1.6 + hash * 1.3)
         const tw = 0.45 + 0.55 * Math.abs(Math.sin(i * 1.93 + d.treble * 9))
+        if (seen % 5 === 0) {
+          const M = D * 3.2
+          g.globalAlpha = 0.09 * age * alpha * (1 - d.silence * 0.4)
+          g.drawImage(disc, px - M / 2, py - M / 2, M, M)
+        }
         g.globalAlpha = (0.32 + 0.5 * tw) * (1 - d.silence * 0.45) * age * alpha
         g.drawImage(spr.canvas, idx * spr.cell, 0, spr.cell, spr.cell, px - D / 2, py - D, D, D)
       }

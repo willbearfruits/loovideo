@@ -38,6 +38,7 @@ export class FloraSystem implements VisualSystem {
   private flock = new Flock()
   private trees: Tree[] = []
   private treeFade: number[] = []
+  private treeScales: number[] = []
   private sproutClock = 0
   private stars = new Stars()
   private scenery = new Scenery()
@@ -193,6 +194,7 @@ export class FloraSystem implements VisualSystem {
         this.lastTreeKey = key
         this.trees = []
         this.treeFade = []
+        this.treeScales = []
         // a grove, not a row of clones: staggered feet, alternating sizes, and
         // the node budget split so the whole stand stays inside the tier
         const share = Math.max(1200, Math.floor(q.treeNodeCap / nTrees))
@@ -224,7 +226,7 @@ export class FloraSystem implements VisualSystem {
         if (this.sproutClock > 14 && drive.onset > 0.85) {
           this.sproutClock = 0
           const t = new Tree()
-          this.plantSprout(t)
+          this.treeScales.push(this.plantSprout(t))
           this.trees.push(t)
           this.treeFade.push(0)
         }
@@ -307,9 +309,18 @@ export class FloraSystem implements VisualSystem {
 
       g.save()
       this.cam.apply(g, w / 2, anchorY, this.fitScale)
-      for (let i = 0; i < this.trees.length; i++) {
+      // trees get the TRUE on-screen scale (fit × camera zoom) so both the
+      // sub-pixel cull and the glow discipline see what the audience sees
+      const screenScale = this.fitScale * this.cam.currentZoom
+      // atmospheric depth: far (small) trees draw first and paler, near trees
+      // last and full — value compression is the primary depth cue in mono
+      const drawOrder = this.trees.map((_, i) => i)
+      drawOrder.sort((a, b) => (this.treeScales[a] ?? 1) - (this.treeScales[b] ?? 1))
+      for (const i of drawOrder) {
         const fade = this.treeFade[i] > 0 ? 1 - this.treeFade[i] / SUCCESSION_FADE : 1
-        this.trees[i].draw(g, w, h, stops, drive, this.fitScale, Math.max(0, fade))
+        const s = this.treeScales[i] ?? 1
+        const depthMul = 0.55 + 0.45 * Math.min(1, Math.max(0, (s - 0.4) / 0.7))
+        this.trees[i].draw(g, w, h, stops, drive, screenScale, Math.max(0, fade) * depthMul)
       }
       this.drawFireflies(g, dt, time, w, h, stops, drive)
       g.restore()
@@ -332,8 +343,8 @@ export class FloraSystem implements VisualSystem {
       drive.perches = this.perchScratch.length > 0 ? this.perchScratch : undefined
     }
 
-    // --- livestock: in front of the field, behind nothing -------------------
-    const animals = Math.round(p.num('flora.animals'))
+    // --- livestock: in front of the field, behind nothing (not in the lake) --
+    const animals = scene === 'lake' ? 0 : Math.round(p.num('flora.animals'))
     if (animals > 0) {
       this.fauna.resize(animals)
       this.fauna.update(dt, w, h, drive)
@@ -350,6 +361,11 @@ export class FloraSystem implements VisualSystem {
       this.flock.resize(Math.max(24, want), w, h)
       this.flock.update(dt, time, w, h, drive)
       this.flock.draw(g, w, h, stops, drive)
+    }
+
+    // --- the lake: the finished world reflected below the shoreline ----------
+    if (scene === 'lake') {
+      this.scenery.drawWater(g, this.canvas, w, h, dt, time, stops, drive)
     }
 
     // night wash over the finished frame — the single strongest cue that the
@@ -413,9 +429,9 @@ export class FloraSystem implements VisualSystem {
   }
 
   /** A volunteer seedling: random ground, small stature, its own species. */
-  private plantSprout(t: Tree): void {
+  private plantSprout(t: Tree): number {
     const s = this.treeSpec
-    if (!s) return
+    if (!s) return 1
     const f = 0.08 + Math.random() * 0.84
     const scale = 0.4 + Math.random() * 0.35
     const species: TreeKind[] = ['oak', 'pine', 'willow', 'birch', 'sapling']
@@ -425,6 +441,7 @@ export class FloraSystem implements VisualSystem {
         : (s.kind as TreeKind)
     const share = Math.max(1200, Math.floor(s.share * 0.45))
     t.reset(s.w, s.h, s.density, s.horizonY, s.w * f, scale, share, kind)
+    return scale
   }
 
   private plantTree(t: Tree, i: number, nTrees: number): void {
@@ -442,5 +459,6 @@ export class FloraSystem implements VisualSystem {
     const kind: TreeKind =
       s.kind === 'mixed' ? species[(i * 3 + (Math.random() * 4) | 0) % species.length] : s.kind
     t.reset(s.w, s.h, s.density, s.horizonY, s.w * (f + jitter), scale, s.share, kind)
+    this.treeScales[i] = scale
   }
 }

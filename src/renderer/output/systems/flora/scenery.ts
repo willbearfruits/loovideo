@@ -53,9 +53,97 @@ function h1(n: number): number {
   return ((x ^ (x >>> 15)) >>> 0) / 4294967296
 }
 
-export type SceneKind = 'bare' | 'hills' | 'farm'
+export type SceneKind = 'bare' | 'hills' | 'farm' | 'lake'
+
+interface Ripple {
+  x: number
+  y: number
+  r: number
+  life: number
+}
 
 export class Scenery {
+  private ripples: Ripple[] = []
+  private rippleOnsetPrev = 0
+
+  /**
+   * Still water below the ground line: the finished frame above the shoreline
+   * is copied back in, flipped, in thin strips displaced sideways — deeper
+   * strips wander more and fade further. Everything reflects: trees, birds,
+   * fireflies, the moon. Onsets ring the surface.
+   */
+  drawWater(
+    g: CanvasRenderingContext2D,
+    src: HTMLCanvasElement,
+    w: number,
+    h: number,
+    dt: number,
+    time: number,
+    stops: string[],
+    d: SceneryDrive
+  ): void {
+    const hy = Math.round(d.horizonY)
+    const depth = h - hy
+    if (depth < 8) return
+    const u = h / 1080
+
+    // water base: darker than land — a mirror loses light
+    g.globalAlpha = 0.62
+    g.fillStyle = stops[0]
+    g.fillRect(0, hy, w, depth)
+
+    // flipped strips; compression 0.92 so the reflection is slightly foreshortened
+    const strip = Math.max(2, Math.round(3 * u))
+    for (let y = 0; y < depth; y += strip) {
+      const srcY = hy - Math.round(y * 0.92) - strip
+      if (srcY < 0) break
+      const df = y / depth
+      const amp = (0.6 + df * 4.2) * u
+      const shift =
+        Math.sin(y * 0.052 + time * 1.35) * amp + Math.sin(y * 0.019 - time * 0.6) * amp * 0.6
+      g.globalAlpha = 0.38 * (1 - df * 0.75)
+      g.drawImage(src, 0, srcY, w, strip, shift, hy + y, w, strip)
+    }
+
+    // ripple rings: onsets strike the surface; the rest is occasional stillness
+    if (d.onset > 0.85 && this.rippleOnsetPrev <= 0.85) {
+      this.ripples.push({ x: Math.random() * w, y: hy + Math.random() * depth * 0.5, r: 2, life: 1 })
+    }
+    this.rippleOnsetPrev = d.onset
+    if (Math.random() < dt * 5 * (1 - d.silence)) {
+      // small ambient rings while sound plays
+      if (this.ripples.length < 14)
+        this.ripples.push({ x: Math.random() * w, y: hy + Math.random() * depth * 0.6, r: 1, life: 0.7 })
+    }
+    g.lineWidth = Math.max(1, u)
+    for (let i = this.ripples.length - 1; i >= 0; i--) {
+      const R = this.ripples[i]
+      R.r += 62 * u * dt
+      R.life -= dt * 0.55
+      if (R.life <= 0) {
+        this.ripples.splice(i, 1)
+        continue
+      }
+      g.strokeStyle = stops[3]
+      g.globalAlpha = 0.28 * R.life
+      g.beginPath()
+      g.ellipse(R.x, R.y, R.r, R.r * 0.32, 0, 0, Math.PI * 2)
+      g.stroke()
+      g.globalAlpha = 0.16 * R.life
+      g.beginPath()
+      g.ellipse(R.x, R.y, R.r * 0.62, R.r * 0.2, 0, 0, Math.PI * 2)
+      g.stroke()
+    }
+
+    // the shoreline: one bright hairline where world meets mirror
+    g.globalAlpha = 0.5
+    g.strokeStyle = stops[3]
+    g.beginPath()
+    g.moveTo(0, hy)
+    g.lineTo(w, hy)
+    g.stroke()
+    g.globalAlpha = 1
+  }
   private smoke = 0
   private vane = 0
 
@@ -149,7 +237,14 @@ export class Scenery {
     const u = h / 1080
     const hy = d.horizonY
 
-    this.drawFurrows(g, w, h, stops, d)
+    if (kind === 'lake') {
+      // the water is drawn later, over the finished world (drawWater);
+      // here only the drifting sky belongs to the shore
+      this.drawClouds(g, w, h, time, stops, d)
+      return
+    }
+
+    this.drawFurrows(g, w, h, time, stops, d)
     if (kind === 'farm') {
       this.drawFence(g, w, h, stops, d)
       this.drawBarn(g, w, h, time, stops, d)
@@ -174,41 +269,58 @@ export class Scenery {
     g.globalAlpha = 1
   }
 
-  /** Ploughed rows converging on a vanishing point — cheap, convincing depth. */
+  /**
+   * A meadow, not a wireframe: a dark settling band under the horizon, then
+   * scattered grass tufts — sparser and larger toward the viewer, leaning
+   * with the wind. Deterministic (seeded hash), so the same field is there
+   * every night. Replaces the ploughed-grid look that read as synthwave.
+   */
   private drawFurrows(
     g: CanvasRenderingContext2D,
     w: number,
     h: number,
+    time: number,
     stops: string[],
     d: SceneryDrive
   ): void {
     const hy = d.horizonY
     if (hy >= h - 4) return
-    const vpX = w * 0.5
-    g.strokeStyle = stops[2]
-    g.lineWidth = Math.max(1, h / 1080)
-    g.globalAlpha = 0.35
-    g.beginPath()
-    const rows = 26
-    for (let i = 0; i <= rows; i++) {
-      // spread the near ends far wider than the field so the rows fan out
-      const t = i / rows
-      const nearX = (t - 0.5) * w * 4 + vpX
-      g.moveTo(vpX + (nearX - vpX) * 0.02, hy)
-      g.lineTo(nearX, h)
-    }
-    g.stroke()
+    const u = h / 1080
 
-    // a few cross-contours, spaced by a perspective-ish falloff
-    g.globalAlpha = 0.22
-    g.beginPath()
-    for (let i = 1; i <= 7; i++) {
-      const t = i / 8
-      const y = hy + (h - hy) * (t * t)
-      g.moveTo(0, y)
-      g.lineTo(w, y)
+    // the land settles: a band of tone right under the horizon, fading near
+    const band = g.createLinearGradient(0, hy, 0, h)
+    band.addColorStop(0, stops[1])
+    band.addColorStop(0.35, stops[1])
+    band.addColorStop(1, stops[0])
+    g.globalAlpha = 0.5
+    g.fillStyle = band
+    g.fillRect(0, hy, w, h - hy)
+
+    // grass tufts with perspective: far = small, dense, pale · near = tall,
+    // sparse, darker; all of them leaning into the gusts
+    g.lineCap = 'round'
+    const N = 170
+    const lean = Math.sin(time * 0.9) * 0.35 + Math.sin(time * 0.37 + 1.7) * 0.25
+    for (let i = 0; i < N; i++) {
+      const hh = Math.sin(i * 127.1) * 43758.5453
+      const r1 = hh - Math.floor(hh)
+      const hh2 = Math.sin(i * 311.7) * 27183.31
+      const r2 = hh2 - Math.floor(hh2)
+      const depth = Math.pow(r1, 1.6) // bias toward the far field
+      const x = r2 * w
+      const y = hy + (h - hy) * depth
+      const size = (2.5 + depth * 13) * u
+      const sway = lean * d.wind * size * 0.45 * (0.6 + r2 * 0.8)
+      g.strokeStyle = stops[2]
+      g.globalAlpha = 0.1 + depth * 0.3
+      g.lineWidth = Math.max(0.8, u * (0.7 + depth))
+      g.beginPath()
+      g.moveTo(x, y)
+      g.quadraticCurveTo(x + sway * 0.4, y - size * 0.6, x + sway, y - size)
+      g.moveTo(x - size * 0.18, y)
+      g.quadraticCurveTo(x - size * 0.2 + sway * 0.3, y - size * 0.45, x + sway * 0.7 - size * 0.1, y - size * 0.78)
+      g.stroke()
     }
-    g.stroke()
     g.globalAlpha = 1
   }
 

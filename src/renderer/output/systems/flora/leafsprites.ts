@@ -61,3 +61,23 @@ export function getLeafSprites(color: string): LeafSprites {
   cache.set(color, s)
   return s
 }
+
+const discCache = new Map<string, HTMLCanvasElement>()
+
+/** Soft radial disc for foliage under-masses: mass first, leaves as edges. */
+export function getGlowDisc(color: string): HTMLCanvasElement {
+  const hit = discCache.get(color)
+  if (hit) return hit
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')!
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31)
+  grad.addColorStop(0, color)
+  grad.addColorStop(0.55, color)
+  grad.addColorStop(1, 'transparent')
+  g.globalAlpha = 0.85
+  g.fillStyle = grad
+  g.fillRect(0, 0, 64, 64)
+  discCache.set(color, c)
+  return c
+}

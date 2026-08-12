@@ -78,7 +78,9 @@ export class Engine {
     const size = new THREE.Vector2(window.innerWidth, window.innerHeight)
     this.layersPass = new LayersPass()
     this.afterimage = new AfterimagePass(0.9)
-    this.bloom = new UnrealBloomPass(size, 0.6, 0.55, 0.62)
+    // threshold 0.72: mid-tone wood must not bloom, only the true lights —
+    // the soft-knee discipline from the glow research
+    this.bloom = new UnrealBloomPass(size, 0.6, 0.55, 0.72)
     this.rgbShift = new ShaderPass(RGBShiftShader)
     this.grade = new ShaderPass(GradeShader)
 
@@ -263,10 +265,10 @@ export class Engine {
     if (this.storyCtx.on) {
       if (so.daytime !== undefined) this.params.eff['flora.daytime'] = so.daytime
       if (so.season !== undefined) this.params.eff['flora.season'] = so.season
-      if (so.windAdd > 0.001)
-        this.params.eff['flora.wind'] = Math.min(
-          2,
-          (this.params.eff['flora.wind'] as number) + so.windAdd
+      if (Math.abs(so.windAdd) > 0.001)
+        this.params.eff['flora.wind'] = Math.max(
+          0,
+          Math.min(2, (this.params.eff['flora.wind'] as number) + so.windAdd)
         )
     }
     const p = this.params
