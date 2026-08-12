@@ -19,7 +19,10 @@ import { Stars } from './stars'
 import { Scenery, dayCycle, type SceneKind, type SceneryDrive } from './scenery'
 import { Fauna, type FaunaDrive } from './fauna'
 
-const MAX_TREES = 7
+/** hard perf ceiling on the whole stand; margin colonization may use it all */
+const MAX_TREES = 12
+/** ceiling for the planted grove + regular sprouting (margins get the rest) */
+const CORE_TREES = 7
 /** seconds a matured tree takes to fade out before its sapling replaces it */
 const SUCCESSION_FADE = 6
 
@@ -41,6 +44,7 @@ export class FloraSystem implements VisualSystem {
   private treeScales: number[] = []
   private sproutClock = 0
   private lastRevealW = 0
+  private marginFlip = false
   private stars = new Stars()
   private scenery = new Scenery()
   private fauna = new Fauna()
@@ -191,7 +195,7 @@ export class FloraSystem implements VisualSystem {
 
     // --- the grove ----------------------------------------------------------
     if (wantTree) {
-      const nTrees = Math.max(1, Math.min(MAX_TREES, Math.round(p.num('flora.trees'))))
+      const nTrees = Math.max(1, Math.min(CORE_TREES, Math.round(p.num('flora.trees'))))
       const kind = (p.str('flora.treeKind') || 'mixed') as TreeKind | 'mixed'
       const key = `${w}x${h}|${density.toFixed(2)}|${horizonY.toFixed(0)}|${nTrees}|${q.treeNodeCap}|${kind}`
       if (key !== this.lastTreeKey) {
@@ -226,7 +230,7 @@ export class FloraSystem implements VisualSystem {
       // onset once enough music has passed — so new trees arrive ON a hit,
       // never mid-nothing. Grove cap still applies.
       const sprout = p.num('flora.sprout')
-      if (sprout > 0.01 && this.trees.length < MAX_TREES && this.treeSpec) {
+      if (sprout > 0.01 && this.trees.length < CORE_TREES && this.treeSpec) {
         this.sproutClock += dt * sprout * (0.15 + drive.level * 1.6) * (1 - drive.silence)
         if (this.sproutClock > 14 && drive.onset > 0.85) {
           this.sproutClock = 0
@@ -295,18 +299,20 @@ export class FloraSystem implements VisualSystem {
       const visHalf = w / 2 / Math.max(0.05, this.fitScale)
       if (this.lastRevealW === 0) this.lastRevealW = visHalf * 2
       if (
-        visHalf * 2 > this.lastRevealW * 1.18 &&
+        visHalf * 2 > this.lastRevealW * 1.12 &&
         this.trees.length < MAX_TREES &&
         this.treeSpec &&
-        drive.silence < 0.5
+        drive.silence < 0.6
       ) {
-        this.lastRevealW = visHalf * 2
         const groveHalf = Number.isFinite(minX) ? Math.max(1, (maxX - minX) / 2) : w * 0.1
         const margin = visHalf * 0.85 - groveHalf
-        if (margin > w * 0.05) {
+        if (margin > w * 0.04) {
+          this.lastRevealW = visHalf * 2
           const t = new Tree()
-          const side = Math.random() < 0.5 ? -1 : 1
-          const x = cxTree + side * (groveHalf + w * 0.04 + Math.random() * margin)
+          // alternate sides so the woodland widens symmetrically
+          this.marginFlip = !this.marginFlip
+          const side = this.marginFlip ? -1 : 1
+          const x = cxTree + side * (groveHalf + w * 0.03 + Math.random() * margin)
           this.treeScales.push(this.plantSprout(t, x))
           this.trees.push(t)
           this.treeFade.push(0)
@@ -391,7 +397,10 @@ export class FloraSystem implements VisualSystem {
       // bird count is a screen-area budget so a windowed preview isn't packed
       const area = Math.min(1, (w * h) / (1920 * 1080))
       const want = Math.round(
-        (300 + density * (q.flockBase - 300)) * (0.4 + 0.6 * area) * flockCountScale(drive.kind)
+        (300 + density * (q.flockBase - 300)) *
+          (0.4 + 0.6 * area) *
+          flockCountScale(drive.kind) *
+          Math.max(0.05, p.num('flora.birds') || 1)
       )
       this.flock.resize(Math.max(24, want), w, h)
       this.flock.update(dt, time, w, h, drive)

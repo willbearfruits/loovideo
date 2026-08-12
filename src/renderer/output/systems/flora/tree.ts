@@ -51,6 +51,8 @@ export interface TreeDrive {
   stroke: string
   /** leaf sprite scale, 0.3..3 — modulatable */
   leafSize: number
+  /** leaf population multiplier, 0.05..2 — modulatable */
+  leafCount: number
 }
 
 /**
@@ -215,6 +217,7 @@ export class Tree {
   private lastOnset = 0
   private ambientCarry = 0
   private maxR = 0
+  private smoothMaxR = 0
   private girthTick = 0
   private maxDepth = 1
   private falling: Leaf[] = []
@@ -746,6 +749,9 @@ export class Tree {
       this.girthTick = 0
       this.radiusDirty = true
     }
+    // the on-screen trunk width follows the pipe radius through an ease, so
+    // girth recomputes never step visibly
+    this.smoothMaxR += (this.maxR - this.smoothMaxR) * Math.min(1, dt * 1.2)
 
     // Felling: for the first second the leaves let go, then the structure
     // itself comes apart from the canopy inward. Nothing grows meanwhile.
@@ -817,7 +823,7 @@ export class Tree {
       // secondary growth: old wood keeps thickening with age (a cambium),
       // so a long-lived trunk widens even after the canopy stops gaining
       // nodes — and the cap itself rises slowly across the tree's life
-      const trunkCap = (h / 42) * (1 + Math.min(1, this.ageSec / 300))
+      const trunkCap = (h / 42) * (1 + Math.min(2, this.ageSec / 120))
       // geometric width thresholds, trunk → twig
       const T = [10, 6.5, 4.2, 2.8, 1.9, 1.35, 0.95].map((v) => v * u)
       const bucketOf = (r: number): number => {
@@ -837,7 +843,7 @@ export class Tree {
       let maxR = 0
       for (let i = 0; i < this.nNodes; i++) {
         if (!this.alive[i]) continue
-        const girth = 1 + Math.min(1.7, (this.ageSec - this.birthT[i]) * 0.008)
+        const girth = 1 + Math.min(3, (this.ageSec - this.birthT[i]) * 0.02)
         const r = Math.min(trunkCap, tipR * Math.sqrt(this.childCount[i] + 1) * girth)
         this.radius[i] = r
         if (r > maxR) maxR = r
@@ -890,14 +896,24 @@ export class Tree {
       let ox = this.nodesX[i] - this.nodesX[p]
       let oy = this.nodesY[i] - this.nodesY[p]
       // growth is continuous, not stepped: a young segment EXTENDS from its
-      // parent over its first half-second instead of popping in whole —
-      // children ride the extending tip, so whole twigs reach outward
-      const segAge = this.ageSec - this.birthT[i]
-      if (segAge < 0.5) {
-        const q = segAge * 2
-        const grow = q * (2 - q) // ease-out
-        ox *= grow
-        oy *= grow
+      // parent instead of popping in whole. Each segment gets its own start
+      // delay and duration (hashed), so a growth tick's whole shell of new
+      // nodes creeps outward asynchronously instead of pulsing in sync —
+      // THAT sync was what still read as steps.
+      if (this.ageSec - this.birthT[i] < 1.0) {
+        const hh = Math.sin(i * 91.7) * 43758.5453
+        const hf = hh - Math.floor(hh)
+        const segAge = this.ageSec - this.birthT[i] - hf * 0.25
+        const dur = 0.35 + hf * 0.55
+        if (segAge <= 0) {
+          ox = 0
+          oy = 0
+        } else if (segAge < dur) {
+          const q = segAge / dur
+          const grow = q * (2 - q) // ease-out
+          ox *= grow
+          oy *= grow
+        }
       }
       const dfrac = this.depth[i] / md
       const stiff = amp * Math.pow(dfrac, 1.7)
@@ -1072,8 +1088,8 @@ export class Tree {
     const widths = [13 * u, 8.5 * u, 5.5 * u, 3.6 * u, 2.4 * u, 1.6 * u, 1.1 * u, 0.8 * u]
     // the trunk's stroke width follows the actual pipe-model radius, so
     // secondary growth is visible: an old trunk is a wide trunk
-    widths[0] = Math.min(27 * u, Math.max(13 * u, this.maxR * 1.1))
-    widths[1] = Math.min(16 * u, Math.max(8.5 * u, this.maxR * 0.62))
+    widths[0] = Math.min(40 * u, Math.max(13 * u, this.smoothMaxR * 1.15))
+    widths[1] = Math.min(24 * u, Math.max(8.5 * u, this.smoothMaxR * 0.65))
     const style = d.stroke
     // structural branches are always drawn whole; the twig tiers get a segment
     // budget so a canopy that has been growing for an hour costs the same to
@@ -1279,13 +1295,18 @@ export class Tree {
       const disc = getGlowDisc(stops[2])
       const base = 5.4 * u * this.prof.leaf * (0.4 + d.leaves * 1.3) * season.size * d.leafSize
       const mature = 6 // SECONDS for a leaf to reach full size
-      const budget = 4000
+      const lc = Math.max(0.05, d.leafCount)
+      const budget = Math.round(4000 * Math.min(1.5, lc))
       const step = Math.max(1, Math.ceil(this.tipCount / budget))
       const TWO_PI = Math.PI * 2
       let seen = 0
       for (let i = 1; i < this.nNodes; i++) {
         if (!this.alive[i] || this.childCount[i] !== 0 || this.depth[i] < 4) continue
         if (seen++ % step !== 0) continue
+        if (lc < 1) {
+          const lh = Math.sin(i * 53.13) * 43758.5453
+          if (lh - Math.floor(lh) > lc) continue
+        }
         const age = Math.min(1, (this.ageSec - this.birthT[i]) / mature)
         if (age <= 0.02) continue
         const p = this.parent[i]
@@ -1308,6 +1329,18 @@ export class Tree {
         }
         g.globalAlpha = (0.32 + 0.5 * tw) * (1 - d.silence * 0.45) * age * alpha
         g.drawImage(spr.canvas, idx * spr.cell, 0, spr.cell, spr.cell, px - D / 2, py - D, D, D)
+        // leaf count above 1: a fraction of tips carry a second leaf
+        if (lc > 1) {
+          const lh2 = Math.sin(i * 97.31) * 43758.5453
+          if (lh2 - Math.floor(lh2) < lc - 1) {
+            const idx2 = (idx + 3) % spr.count
+            const ox2 = (hash - 0.5) * D * 1.1
+            g.drawImage(
+              spr.canvas, idx2 * spr.cell, 0, spr.cell, spr.cell,
+              px - D / 2 + ox2, py - D * 0.6, D * 0.85, D * 0.85
+            )
+          }
+        }
       }
     }
 
