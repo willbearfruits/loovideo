@@ -12,6 +12,7 @@
 //   presets                    list presets
 //   fullscreen <on|off>        output window fullscreen
 //   display <n>                move output window to display n (0-based)
+//   place <tree|birds|fell> [x y]   stage tap at normalized 0..1 coords
 //   watch                      stream telemetry (ctrl-c to stop)
 
 import WebSocket from 'ws'
@@ -31,7 +32,7 @@ const host = flag('host', '127.0.0.1')
 const [cmd, ...rest] = argv
 
 if (!cmd) {
-  console.log('usage: ctl <state|set|get|system|preset|preset-save|presets|fullscreen|display|watch>')
+  console.log('usage: ctl <state|set|get|system|preset|preset-save|presets|fullscreen|display|place|watch>')
   process.exit(1)
 }
 
@@ -104,6 +105,13 @@ ws.on('message', (raw) => {
         send({ t: 'window', display: Number(rest[0]) || 0 })
         die(`display → ${rest[0]}`)
         break
+      case 'place': {
+        const x = rest[1] !== undefined ? Number(rest[1]) : 0.5
+        const y = rest[2] !== undefined ? Number(rest[2]) : 0.55
+        send({ t: 'place', kind: rest[0], x, y })
+        die(`place ${rest[0]} @ ${x},${y}`)
+        break
+      }
       case 'watch':
         console.log('watching telemetry — ctrl-c to stop')
         break

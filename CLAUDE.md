@@ -134,6 +134,26 @@ ESP32 companion controller; WebGPU/TSL upgrade later.
   grows, and spent attractors are compacted. Endless growth means these run
   forever — reintroducing a per-tick `new Float32Array(n)` will show up as GC
   stutter minutes into a set, not immediately.
+- Branch width is **Strahler stream order** (`radius = tipR·order^1.55·ageGirth`),
+  not the pipe model — sqrt(subtree) hit the trunk cap almost immediately, which
+  is why trunks stopped visibly thickening. The order recompute lives inside the
+  `radiusDirty` block and borrows `order` as depth-sort scratch before the width
+  sort rebuilds it; it needs children processed before parents, so don't
+  "simplify" the depth sort away. Radius is monotone non-increasing from root to
+  tip — the baked-wood freeze relies on that.
+- **Baked wood**: in calm air each tree renders its halo + four widest buckets
+  once into an offscreen world-space canvas (`renderBake`) and composites it,
+  stroking only twigs/frontier/leaves live; while baked, structural sway is
+  frozen so live twigs stay attached to rest-posed limbs. The bake dissolves in
+  wind, mid-fell, and on close zoom (they draw fully live — the storm pays full
+  price on purpose). Any new structural drawing must either go through
+  `drawCores`/`drawHalo` (which take X/Y arrays for exactly this) or check
+  `bakedFlag`, or it will double-draw.
+- The **axe coppices**: first strike cuts to a stump and epicormic shoots regrow
+  from the cut (`coppice()`/`finishCoppice()`); a second strike within 25s
+  (`recentlyCut`) uproots the tree for good. `flora.fell` (the button/story) is
+  still the full fell-and-replant. `felled` is guarded with `!coppiceMode` so
+  FloraSystem never replants a healthy coppice mid-shed.
 - Tree nodes are a slot pool, not an append-only list: `alive`/`freeList`
   recycle slots freed by dieback, `nNodes` is a high-water mark and
   `liveCount` is the real population. Anything iterating nodes MUST check

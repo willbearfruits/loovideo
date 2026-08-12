@@ -249,6 +249,51 @@ export class Tree {
   private bucketStart = new Int32Array(9)
   private cursor = new Int32Array(8)
 
+  // Strahler stream order per node. The pipe model's sqrt(subtree) hits the
+  // trunk cap almost immediately on a mature tree, which is why trunks
+  // stopped visibly thickening; Strahler order rises like log(size), so width
+  // keyed to it keeps pace with how BRANCHED the tree actually is. strahler2
+  // holds the runner-up child order during the recompute (a tie promotes).
+  private strahler = new Int32Array(INIT_CAP)
+  private strahler2 = new Int32Array(INIT_CAP)
+  private depthCount = new Int32Array(0)
+  private widthLUT = new Float64Array(64)
+
+  // Coppice — the axe's first strike. The shed stops at a stump line and
+  // epicormic shoots regrow from the cut, so the axe is a gesture inside the
+  // endless-growth story, not a delete button. coppiceAge < 25s marks the
+  // window in which a second strike uproots the tree for good.
+  private coppiceMode = false
+  private stumpDepth = 0
+  private coppiceAge = -1
+
+  // Baked wood. In calm air the structural buckets (halo + the four widest)
+  // are drawn ONCE into an offscreen canvas in world coordinates and
+  // composited per frame; only twigs, frontier and foliage are stroked live.
+  // While the bake is active the structural wood holds still (its sway is
+  // sub-pixel in calm air anyway) so live twigs stay attached to rest-posed
+  // limbs. Strong wind, felling, or a close zoom dissolves the bake and the
+  // whole tree is stroked live again — the storm pays full price on purpose.
+  private bakeCanvas: HTMLCanvasElement | null = null
+  private bakeCtx: CanvasRenderingContext2D | null = null
+  private bakeBlend = 0
+  private bakeValid = false
+  private bakeTimer = 99
+  private bakeKey = ''
+  private bakeScale = 1
+  private bakeReqScale = 1
+  private bakeX0 = 0
+  private bakeY0 = 0
+  private bakeWw = 0
+  private bakeWh = 0
+  private bakePw = 0
+  private bakePh = 0
+  private bakedFlag = new Uint8Array(INIT_CAP)
+  /** radius above which a node counts as bakeable structural wood */
+  private bakeR = Infinity
+  /** fit scale seen at the last draw — update() reads it for bake decisions */
+  private lastFit = 1
+
   /**
    * @param originX  trunk foot, in canvas px (a grove spreads these out)
    * @param scale    per-trunk size multiplier, so a grove is not a row of clones
@@ -278,6 +323,12 @@ export class Tree {
     this.hashDirty = false
     this.decayCarry = 0
     this.fellT = 0
+    this.coppiceMode = false
+    this.coppiceAge = -1
+    this.bakeValid = false
+    this.bakeBlend = 0
+    this.bakeTimer = 99
+    this.bakeR = Infinity
     this.ageSec = 0
     this.density = density
     this.nodeCeiling = Math.max(600, Math.floor(nodeCeiling))
@@ -356,6 +407,9 @@ export class Tree {
     this.accY = new Float32Array(cap)
     this.accN = new Int32Array(cap)
     this.order = new Int32Array(cap)
+    this.strahler = new Int32Array(cap)
+    this.strahler2 = new Int32Array(cap)
+    this.bakedFlag = new Uint8Array(cap)
     this.alive = new Uint8Array(cap)
     this.birth = new Int32Array(cap)
     this.birthT = new Float32Array(cap)
@@ -392,6 +446,11 @@ export class Tree {
     this.accY = new Float32Array(next)
     this.accN = new Int32Array(next)
     this.order = new Int32Array(next)
+    this.strahler = i32(this.strahler)
+    this.strahler2 = i32(this.strahler2)
+    const bf = new Uint8Array(next)
+    bf.set(this.bakedFlag)
+    this.bakedFlag = bf
     const al = new Uint8Array(next)
     al.set(this.alive)
     this.alive = al
@@ -595,11 +654,11 @@ export class Tree {
    * some of them. Unlike the age-ordered dieback this erodes the whole canopy
    * at once, which is what a tree coming down looks like.
    */
-  private shedAnyTips(target: number, h: number, spawnLeaves: boolean): number {
+  private shedAnyTips(target: number, h: number, spawnLeaves: boolean, minDepth = 0): number {
     const u = h / 1080
     let killed = 0
     for (let i = 1; i < this.nNodes && killed < target; i++) {
-      if (!this.alive[i] || this.childCount[i] !== 0) continue
+      if (!this.alive[i] || this.childCount[i] !== 0 || this.depth[i] <= minDepth) continue
       if (spawnLeaves && this.falling.length < 260 && this.depth[i] > 3) {
         this.falling.push({
           x: this.swayX[i],
@@ -618,6 +677,19 @@ export class Tree {
 
   /** Start the fell sequence: leaves let go, then the structure comes apart. */
   fell(): void {
+    this.coppiceMode = false
+    if (this.fellT === 0) this.fellT = 0.0001
+  }
+
+  /**
+   * The axe's first strike: cut back to a stump instead of removing the
+   * tree. The shed halts at the stump line, then finishCoppice() seeds
+   * epicormic shoots on the cut wood and growth resumes.
+   */
+  coppice(): void {
+    if (this.fellT > 0) return
+    this.coppiceMode = true
+    this.stumpDepth = Math.max(4, Math.round(this.maxDepth * 0.12))
     this.fellT = 0.0001
   }
 
@@ -627,7 +699,41 @@ export class Tree {
 
   /** True once the tree is gone and the slot should be replanted. */
   get felled(): boolean {
-    return this.fellT > 0 && this.liveCount <= 24
+    return this.fellT > 0 && !this.coppiceMode && this.liveCount <= 24
+  }
+
+  /** Struck by the axe recently — a second strike now uproots it for good. */
+  get recentlyCut(): boolean {
+    return this.coppiceMode || (this.coppiceAge >= 0 && this.coppiceAge < 25)
+  }
+
+  /** Everything above the stump is gone: seed epicormic shoots on the cut. */
+  private finishCoppice(): void {
+    this.fellT = 0
+    this.coppiceMode = false
+    this.coppiceAge = 0
+    this.done = false
+    this.stall = 0
+    this.tickBudget = 0
+    // the old crown's attractors are void — the coppice grows a new flush
+    this.attrAlive.fill(0, 0, this.attrN)
+    this.attrN = 0
+    this.attrLeft = 0
+    // the highest surviving wood is the cut line; the new crown sits on it,
+    // reaching a little below so shoots also break from the stump's sides
+    let topX = this.originX
+    let topY = this.rootY
+    for (let i = 0; i < this.nNodes; i++) {
+      if (this.alive[i] && this.nodesY[i] < topY) {
+        topY = this.nodesY[i]
+        topX = this.nodesX[i]
+      }
+    }
+    const rx = this.segLen * (7 + this.density * 5)
+    const ry = this.segLen * (6 + this.density * 4)
+    this.seedCrown(topX, topY - ry * 0.55, rx, ry, Math.round(120 + this.density * 240))
+    this.generation++
+    this.bakeValid = false // the silhouette just changed completely
   }
 
   /** Nearest node to (x,y) within `maxD`, via the 3×3 cell neighbourhood. */
@@ -755,11 +861,20 @@ export class Tree {
 
     // Felling: for the first second the leaves let go, then the structure
     // itself comes apart from the canopy inward. Nothing grows meanwhile.
+    // A coppice is the same collapse held back at the stump line: once
+    // nothing above the stump is left to shed, the cut regrows.
+    if (this.coppiceAge >= 0 && this.coppiceAge < 999) this.coppiceAge += dt
     if (this.fellT > 0) {
       this.fellT += dt
       const leafPhase = this.fellT < 1.1
       const rate = leafPhase ? 0.02 : 0.09
-      this.shedAnyTips(Math.max(30, Math.round(this.nodeCeiling * rate)), h, true)
+      const shed = this.shedAnyTips(
+        Math.max(30, Math.round(this.nodeCeiling * rate)),
+        h,
+        true,
+        this.coppiceMode ? this.stumpDepth : 0
+      )
+      if (this.coppiceMode && !leafPhase && shed === 0) this.finishCoppice()
     }
 
     // audio-driven growth: ticks accrue with level & vigor; onsets spurt;
@@ -820,12 +935,59 @@ export class Tree {
     if (this.radiusDirty) {
       this.radiusDirty = false
       const tipR = 1.1 * u
-      // secondary growth: old wood keeps thickening with age (a cambium),
-      // so a long-lived trunk widens even after the canopy stops gaining
-      // nodes — and the cap itself rises slowly across the tree's life
+      // the trunk cap is now only a safety ceiling over the Strahler width,
+      // still rising slowly with age so an ancient giant reads as one
       const trunkCap = (h / 42) * (1 + Math.min(2, this.ageSec / 120))
+
+      // ── Strahler stream order, children before parents ──────────────────
+      // Order 1 at a tip; a junction whose two strongest children TIE is
+      // promoted one order. Nodes are counting-sorted by depth (borrowing
+      // `order`, which the width sort below rebuilds anyway) and walked
+      // deepest-first, so each node's child orders are final when read.
+      const so1 = this.strahler
+      const so2 = this.strahler2
+      so1.fill(0, 0, this.nNodes)
+      so2.fill(0, 0, this.nNodes)
+      if (this.depthCount.length < this.maxDepth + 2) {
+        this.depthCount = new Int32Array(this.maxDepth + 66)
+      }
+      const dc = this.depthCount
+      dc.fill(0)
+      let liveTotal = 0
+      for (let i = 0; i < this.nNodes; i++) {
+        if (!this.alive[i]) continue
+        dc[this.depth[i] + 1]++
+        liveTotal++
+      }
+      for (let d2 = 1; d2 <= this.maxDepth + 1; d2++) dc[d2] += dc[d2 - 1]
+      for (let i = 0; i < this.nNodes; i++) {
+        if (this.alive[i]) this.order[dc[this.depth[i]]++] = i
+      }
+      for (let k = liveTotal - 1; k >= 0; k--) {
+        const i = this.order[k]
+        const s =
+          this.childCount[i] === 0
+            ? 1
+            : so1[i] > 0 && so1[i] === so2[i]
+              ? so1[i] + 1
+              : Math.max(1, so1[i])
+        so1[i] = s
+        const p = this.parent[i]
+        if (p >= 0) {
+          if (s > so1[p]) {
+            so2[p] = so1[p]
+            so1[p] = s
+          } else if (s > so2[p]) so2[p] = s
+        }
+      }
+      // width ∝ order^1.55, LUT'd — this loop runs on every growth tick.
+      // Root order > 60 would need 2^60 tips; the LUT bound is a formality.
+      const maxOrd = Math.min(this.widthLUT.length - 1, Math.max(1, so1[0]))
+      for (let s2 = 1; s2 <= maxOrd; s2++) this.widthLUT[s2] = Math.pow(s2, 1.55)
+
       // geometric width thresholds, trunk → twig
       const T = [10, 6.5, 4.2, 2.8, 1.9, 1.35, 0.95].map((v) => v * u)
+      this.bakeR = T[3]
       const bucketOf = (r: number): number => {
         for (let b = 0; b < 7; b++) if (r > T[b]) return b
         return 7
@@ -843,8 +1005,11 @@ export class Tree {
       let maxR = 0
       for (let i = 0; i < this.nNodes; i++) {
         if (!this.alive[i]) continue
-        const girth = 1 + Math.min(3, (this.ageSec - this.birthT[i]) * 0.02)
-        const r = Math.min(trunkCap, tipR * Math.sqrt(this.childCount[i] + 1) * girth)
+        // Strahler drives the width; the age cambium still thickens old wood
+        // on top of it, so a seedling's shoot is hairline-thin and an old
+        // trunk is visibly wider than a young one of the same order
+        const girth = 1 + Math.min(1.6, (this.ageSec - this.birthT[i]) * 0.016)
+        const r = Math.min(trunkCap, tipR * this.widthLUT[Math.min(maxOrd, so1[i])] * girth)
         this.radius[i] = r
         if (r > maxR) maxR = r
         const x = this.nodesX[i]
@@ -884,6 +1049,24 @@ export class Tree {
     const gust = 0.5 + 0.5 * Math.sin(time * 0.31 + Math.sin(time * 0.13) * 2)
     const amp = d.wind * (0.028 + d.bass * 0.02) * gust
     const md = Math.max(1, this.maxDepth)
+
+    // Baked-wood management: bake only in calm air, on a wide framing, when
+    // there is enough structural wood to be worth caching — never mid-fell.
+    // Hysteresis on the wind threshold so the crossfade doesn't flap, and
+    // the blend eases so structural sway hands over smoothly rather than
+    // snapping to rest.
+    {
+      const structN = this.bucketStart[4] - this.bucketStart[0]
+      const spanPx = (this.maxX - this.minX) * this.lastFit
+      const calm = this.bakeBlend > 0.5 ? amp < 0.065 : amp < 0.04
+      const target =
+        this.fellT === 0 && calm && structN > 140 && spanPx > 0 && spanPx < 1500 ? 1 : 0
+      this.bakeBlend += (target - this.bakeBlend) * Math.min(1, dt * 1.6)
+      if (target === 1 && this.bakeBlend > 0.997) this.bakeBlend = 1
+      if (target === 0 && this.bakeBlend < 0.003) this.bakeBlend = 0
+      this.bakeTimer += dt
+    }
+    const bb = this.bakeBlend
     for (let i = 0; i < this.nNodes; i++) {
       if (!this.alive[i]) continue
       const p = this.parent[i]
@@ -917,15 +1100,21 @@ export class Tree {
       }
       const dfrac = this.depth[i] / md
       const stiff = amp * Math.pow(dfrac, 1.7)
-      if (stiff < 1e-4 && this.swayA[p] === 0) {
+      // fully baked structural wood holds still: its strokes come from the
+      // bake image at rest pose, so the live sway must agree or twigs would
+      // detach from their limbs. Ancestors are structural too (radius is
+      // monotone toward the root), so swayA[p] is already 0 here.
+      const structural = bb > 0 && this.radius[i] > this.bakeR
+      if ((structural && bb >= 1) || (stiff < 1e-4 && this.swayA[p] === 0)) {
         this.swayX[i] = this.swayX[p] + ox
         this.swayY[i] = this.swayY[p] + oy
         this.swayA[i] = 0
         continue
       }
-      const theta =
+      let theta =
         stiff * Math.sin(time * 1.9 + this.phase[i]) +
         amp * 0.3 * (dfrac > 0.6 ? Math.sin(time * 7.1 + this.phase[i] * 2.3) * d.treble : 0)
+      if (structural) theta *= 1 - bb
       const a = this.swayA[p] + theta
       const c = Math.cos(a)
       const s = Math.sin(a)
@@ -1085,178 +1274,67 @@ export class Tree {
 
     g.lineCap = 'round'
     g.lineJoin = 'round'
+    this.lastFit = fitScale
     const widths = [13 * u, 8.5 * u, 5.5 * u, 3.6 * u, 2.4 * u, 1.6 * u, 1.1 * u, 0.8 * u]
-    // the trunk's stroke width follows the actual pipe-model radius, so
+    // the trunk's stroke width follows the actual Strahler radius, so
     // secondary growth is visible: an old trunk is a wide trunk
     widths[0] = Math.min(40 * u, Math.max(13 * u, this.smoothMaxR * 1.15))
     widths[1] = Math.min(24 * u, Math.max(8.5 * u, this.smoothMaxR * 0.65))
     const style = d.stroke
-    // structural branches are always drawn whole; the twig tiers get a segment
-    // budget so a canopy that has been growing for an hour costs the same to
-    // stroke as one that started ten minutes ago
-    const budget = [Infinity, Infinity, Infinity, Infinity, 9000, 9000, 12000, 12000]
     const st = this.bucketStart
 
-    // 1) halo: a wide, dim under-glow beneath the structural wood. This is
-    // what makes the trunk read as light rather than a line (fx.bloom then
-    // lifts it further on dark palettes). The alpha adapts to how much
-    // structural wood there is — a sapling gets a full halo, a banyan whose
-    // whole dome is thick limbs would otherwise wash out into glare.
-    const structN = Math.max(1, st[3] - st[0])
-    // glow discipline: damp the halo by how much structural wood there is AND
-    // by camera zoom — a close-up trunk is already physically wide on screen,
-    // and un-damped halo + bloom blows it out to a white blob
-    const zoomDamp = Math.min(1, 1.5 / Math.max(1, fitScale))
-    g.strokeStyle = stops[2]
-    g.globalAlpha =
-      (style === 'hairline' ? 0 : 0.15) * alpha * Math.min(1, 340 / structN) * zoomDamp
-    for (let b = 0; b < (style === 'hairline' ? 0 : 3); b++) {
-      const from = st[b]
-      const to = st[b + 1]
-      if (to <= from) continue
-      g.lineWidth = widths[b] * 2.8
+    // 1+2) halo and structural cores come from the BAKE when it is active:
+    // one composited image instead of thousands of strokes. The bake is
+    // refreshed when stale (girth tick, palette/style change, zoom-in past
+    // its resolution); if it cannot render, everything draws live as before.
+    if (this.bakeBlend > 0.001) {
+      const key = `${style}|${stops[2]}|${stops[3]}|${stops[4]}|${K.fiber ? 'f' : ''}`
+      const stale =
+        !this.bakeValid ||
+        key !== this.bakeKey ||
+        this.bakeTimer > 4 ||
+        Math.min(3, fitScale) > this.bakeReqScale * 1.35
+      if (stale && this.bakeTimer > 0.4) this.renderBake(h, stops, style, widths, u, fitScale, key)
+    }
+    const bakeA = this.bakeValid ? this.bakeBlend : 0
+    const liveA = 1 - bakeA
+
+    if (liveA > 0.003) {
+      this.drawHalo(g, this.swayX, this.swayY, stops, style, widths, alpha * liveA, fitScale)
+      this.drawCores(
+        g, 0, 4, this.swayX, this.swayY, stops, style, widths, u, onScreenSeg, alpha * liveA
+      )
+    } else {
+      // stragglers: wood promoted into the structural buckets since the last
+      // bake — a handful of segments, stroked plainly until the next refresh
+      g.strokeStyle = stops[3]
+      g.globalAlpha = 0.85 * alpha
+      g.lineWidth = widths[3]
       g.beginPath()
-      for (let k = from; k < to; k++) {
+      let any = false
+      for (let k = st[0]; k < st[4]; k++) {
         const i = this.order[k]
+        if (this.bakedFlag[i]) continue
         const p = this.parent[i]
+        if (p < 0) continue
         g.moveTo(this.swayX[p], this.swayY[p])
         g.lineTo(this.swayX[i], this.swayY[i])
+        any = true
       }
-      g.stroke()
+      if (any) g.stroke()
+    }
+    if (bakeA > 0.003 && this.bakeCanvas) {
+      g.globalAlpha = alpha * bakeA
+      g.drawImage(
+        this.bakeCanvas,
+        0, 0, this.bakePw, this.bakePh,
+        this.bakeX0, this.bakeY0, this.bakeWw, this.bakeWh
+      )
+      g.globalAlpha = 1
     }
 
-    // 2) cores: an eight-step tone ladder, trunk bright through grey twig —
-    // the sumi-e five-tones idea stretched over the taper — and limbs curve
-    // through segment midpoints so chains read as drawn strokes, not joints.
-    const coreCols = [
-      stops[4], stops[4], stops[4],
-      stops[3], stops[3], stops[3],
-      stops[2], stops[2]
-    ]
-    const coreAlpha = [0.98, 0.95, 0.9, 0.8, 0.7, 0.6, 0.52, 0.42]
-    for (let b = 0; b < 8; b++) {
-      if (b >= 6 && onScreenSeg <= 0.9) continue // finest tiers are sub-pixel
-      const from = st[b]
-      const to = st[b + 1]
-      if (to <= from) continue
-      const stride = Math.max(1, Math.ceil((to - from) / budget[b]))
-      const curved = stride === 1 && b < 6
-      g.globalAlpha = coreAlpha[b] * alpha
-      g.strokeStyle = coreCols[b]
-
-      // ---- stroke styles -------------------------------------------------
-      if (style === 'hairline') {
-        // one delicate weight everywhere: the all-line look of etchings
-        g.lineWidth = Math.max(0.8 * u, widths[b] * 0.22)
-        g.globalAlpha = (b < 2 ? 0.95 : 0.8) * alpha
-        g.strokeStyle = b < 2 ? stops[4] : stops[3]
-        g.beginPath()
-        for (let k = from; k < to; k += stride) {
-          const i = this.order[k]
-          const p = this.parent[i]
-          g.moveTo(this.swayX[p], this.swayY[p])
-          g.lineTo(this.swayX[i], this.swayY[i])
-        }
-        g.stroke()
-        continue
-      }
-
-      if (style === 'brush' && b < 4) {
-        // wet brush: three jittered passes build the stroke — accumulation,
-        // not a single confident line (the inconvergent/Hobbs move, budgeted)
-        for (let pass = 0; pass < 3; pass++) {
-          g.lineWidth = widths[b] * (0.62 - pass * 0.09)
-          g.globalAlpha = 0.38 * alpha
-          g.beginPath()
-          for (let k = from; k < to; k += stride) {
-            const i = this.order[k]
-            const p = this.parent[i]
-            const dx = this.swayX[i] - this.swayX[p]
-            const dy = this.swayY[i] - this.swayY[p]
-            const inv = 1 / (Math.hypot(dx, dy) || 1)
-            const hsh = Math.sin(i * 37.7 + pass * 91.3) * 43758.5453
-            const off = (hsh - Math.floor(hsh) - 0.5) * widths[b] * 0.55
-            const nx = -dy * inv * off
-            const ny = dx * inv * off
-            g.moveTo(this.swayX[p] + nx, this.swayY[p] + ny)
-            g.lineTo(this.swayX[i] + nx, this.swayY[i] + ny)
-          }
-          g.stroke()
-        }
-        continue
-      }
-
-      if (style === 'brush') {
-        // dry brush (kasure) on the outer wood: the stroke breaks up where
-        // the bristles run out — gaps and doubled streaks, never solid
-        for (const off of [-0.3, 0.35]) {
-          g.lineWidth = widths[b] * 0.6
-          g.globalAlpha = coreAlpha[b] * 0.62 * alpha
-          g.beginPath()
-          for (let k = from; k < to; k += stride) {
-            const i = this.order[k]
-            if ((((i * 2654435761) >>> 0) & 255) < 72) continue // the gaps
-            const p = this.parent[i]
-            const dx = this.swayX[i] - this.swayX[p]
-            const dy = this.swayY[i] - this.swayY[p]
-            const inv = 1 / (Math.hypot(dx, dy) || 1)
-            const nx = -dy * inv * widths[b] * off
-            const ny = dx * inv * widths[b] * off
-            g.moveTo(this.swayX[p] + nx, this.swayY[p] + ny)
-            g.lineTo(this.swayX[i] + nx, this.swayY[i] + ny)
-          }
-          g.stroke()
-        }
-        continue
-      }
-
-      if (b === 0 && K.fiber) {
-        // fiber bundle: three offset strands instead of one heavy line — the
-        // twisted-trunk look of the bonsai / banyan references
-        for (const off of [-0.34, 0, 0.34]) {
-          const o = widths[0] * off
-          g.lineWidth = widths[0] * (off === 0 ? 0.5 : 0.4)
-          g.globalAlpha = (off === 0 ? 0.98 : 0.8) * alpha
-          g.beginPath()
-          for (let k = from; k < to; k++) {
-            const i = this.order[k]
-            const p = this.parent[i]
-            const dx = this.swayX[i] - this.swayX[p]
-            const dy = this.swayY[i] - this.swayY[p]
-            const inv = 1 / (Math.hypot(dx, dy) || 1)
-            const nx = -dy * inv * o
-            const ny = dx * inv * o
-            g.moveTo(this.swayX[p] + nx, this.swayY[p] + ny)
-            g.lineTo(this.swayX[i] + nx, this.swayY[i] + ny)
-          }
-          g.stroke()
-        }
-        continue
-      }
-
-      // the caller's fit transform already scales stroke width — don't re-apply
-      g.lineWidth = widths[b]
-      g.beginPath()
-      for (let k = from; k < to; k += stride) {
-        const i = this.order[k]
-        const p = this.parent[i]
-        const gp = p >= 0 ? this.parent[p] : -1
-        if (!curved || gp < 0) {
-          g.moveTo(this.swayX[p], this.swayY[p])
-          g.lineTo(this.swayX[i], this.swayY[i])
-        } else {
-          g.moveTo((this.swayX[gp] + this.swayX[p]) / 2, (this.swayY[gp] + this.swayY[p]) / 2)
-          g.quadraticCurveTo(
-            this.swayX[p],
-            this.swayY[p],
-            (this.swayX[p] + this.swayX[i]) / 2,
-            (this.swayY[p] + this.swayY[i]) / 2
-          )
-          if (this.childCount[i] === 0) g.lineTo(this.swayX[i], this.swayY[i])
-        }
-      }
-      g.stroke()
-    }
+    // twig tiers are always live — they carry the sway and the growth
+    this.drawCores(g, 4, 8, this.swayX, this.swayY, stops, style, widths, u, onScreenSeg, alpha)
 
     // 3) the growth frontier: tone 1 is scarce and belongs to what is
     // happening NOW — segments younger than ~2.2s burn brighter than wood,
@@ -1355,6 +1433,272 @@ export class Tree {
       }
     }
     g.globalAlpha = 1
+  }
+
+  /**
+   * The halo: a wide, dim under-glow beneath the structural wood. This is
+   * what makes the trunk read as light rather than a line (fx.bloom then
+   * lifts it further on dark palettes). The alpha adapts to how much
+   * structural wood there is — a sapling gets a full halo, a banyan whose
+   * whole dome is thick limbs would otherwise wash out into glare — AND to
+   * camera zoom: a close-up trunk is already physically wide on screen, and
+   * un-damped halo + bloom blows it out to a white blob.
+   * Positions come from X/Y so the same code draws the live (swayed) tree
+   * and the rest-posed bake.
+   */
+  private drawHalo(
+    g: CanvasRenderingContext2D,
+    X: Float32Array,
+    Y: Float32Array,
+    stops: string[],
+    style: string,
+    widths: number[],
+    alphaMul: number,
+    fitScale: number
+  ): void {
+    if (style === 'hairline' || alphaMul <= 0.003) return
+    const st = this.bucketStart
+    const structN = Math.max(1, st[3] - st[0])
+    const zoomDamp = Math.min(1, 1.5 / Math.max(1, fitScale))
+    g.strokeStyle = stops[2]
+    g.globalAlpha = 0.15 * alphaMul * Math.min(1, 340 / structN) * zoomDamp
+    for (let b = 0; b < 3; b++) {
+      const from = st[b]
+      const to = st[b + 1]
+      if (to <= from) continue
+      g.lineWidth = widths[b] * 2.8
+      g.beginPath()
+      for (let k = from; k < to; k++) {
+        const i = this.order[k]
+        const p = this.parent[i]
+        g.moveTo(X[p], Y[p])
+        g.lineTo(X[i], Y[i])
+      }
+      g.stroke()
+    }
+  }
+
+  /**
+   * Core strokes for buckets [bFrom, bTo): an eight-step tone ladder, trunk
+   * bright through grey twig — the sumi-e five-tones idea stretched over the
+   * taper — and limbs curve through segment midpoints so chains read as
+   * drawn strokes, not joints. All stroke styles live here. Positions come
+   * from X/Y so the same code draws the live tree and the rest-posed bake.
+   * Structural branches are always drawn whole; the twig tiers get a segment
+   * budget so a canopy that has been growing for an hour costs the same to
+   * stroke as one that started ten minutes ago.
+   */
+  private drawCores(
+    g: CanvasRenderingContext2D,
+    bFrom: number,
+    bTo: number,
+    X: Float32Array,
+    Y: Float32Array,
+    stops: string[],
+    style: string,
+    widths: number[],
+    u: number,
+    onScreenSeg: number,
+    alphaMul: number
+  ): void {
+    if (alphaMul <= 0.003) return
+    const K = this.prof
+    const st = this.bucketStart
+    const budget = [Infinity, Infinity, Infinity, Infinity, 9000, 9000, 12000, 12000]
+    const coreCols = [
+      stops[4], stops[4], stops[4],
+      stops[3], stops[3], stops[3],
+      stops[2], stops[2]
+    ]
+    const coreAlpha = [0.98, 0.95, 0.9, 0.8, 0.7, 0.6, 0.52, 0.42]
+    for (let b = bFrom; b < bTo; b++) {
+      if (b >= 6 && onScreenSeg <= 0.9) continue // finest tiers are sub-pixel
+      const from = st[b]
+      const to = st[b + 1]
+      if (to <= from) continue
+      const stride = Math.max(1, Math.ceil((to - from) / budget[b]))
+      const curved = stride === 1 && b < 6
+      g.globalAlpha = coreAlpha[b] * alphaMul
+      g.strokeStyle = coreCols[b]
+
+      // ---- stroke styles -------------------------------------------------
+      if (style === 'hairline') {
+        // one delicate weight everywhere: the all-line look of etchings
+        g.lineWidth = Math.max(0.8 * u, widths[b] * 0.22)
+        g.globalAlpha = (b < 2 ? 0.95 : 0.8) * alphaMul
+        g.strokeStyle = b < 2 ? stops[4] : stops[3]
+        g.beginPath()
+        for (let k = from; k < to; k += stride) {
+          const i = this.order[k]
+          const p = this.parent[i]
+          g.moveTo(X[p], Y[p])
+          g.lineTo(X[i], Y[i])
+        }
+        g.stroke()
+        continue
+      }
+
+      if (style === 'brush' && b < 4) {
+        // wet brush: three jittered passes build the stroke — accumulation,
+        // not a single confident line (the inconvergent/Hobbs move, budgeted)
+        for (let pass = 0; pass < 3; pass++) {
+          g.lineWidth = widths[b] * (0.62 - pass * 0.09)
+          g.globalAlpha = 0.38 * alphaMul
+          g.beginPath()
+          for (let k = from; k < to; k += stride) {
+            const i = this.order[k]
+            const p = this.parent[i]
+            const dx = X[i] - X[p]
+            const dy = Y[i] - Y[p]
+            const inv = 1 / (Math.hypot(dx, dy) || 1)
+            const hsh = Math.sin(i * 37.7 + pass * 91.3) * 43758.5453
+            const off = (hsh - Math.floor(hsh) - 0.5) * widths[b] * 0.55
+            const nx = -dy * inv * off
+            const ny = dx * inv * off
+            g.moveTo(X[p] + nx, Y[p] + ny)
+            g.lineTo(X[i] + nx, Y[i] + ny)
+          }
+          g.stroke()
+        }
+        continue
+      }
+
+      if (style === 'brush') {
+        // dry brush (kasure) on the outer wood: the stroke breaks up where
+        // the bristles run out — gaps and doubled streaks, never solid
+        for (const off of [-0.3, 0.35]) {
+          g.lineWidth = widths[b] * 0.6
+          g.globalAlpha = coreAlpha[b] * 0.62 * alphaMul
+          g.beginPath()
+          for (let k = from; k < to; k += stride) {
+            const i = this.order[k]
+            if ((((i * 2654435761) >>> 0) & 255) < 72) continue // the gaps
+            const p = this.parent[i]
+            const dx = X[i] - X[p]
+            const dy = Y[i] - Y[p]
+            const inv = 1 / (Math.hypot(dx, dy) || 1)
+            const nx = -dy * inv * widths[b] * off
+            const ny = dx * inv * widths[b] * off
+            g.moveTo(X[p] + nx, Y[p] + ny)
+            g.lineTo(X[i] + nx, Y[i] + ny)
+          }
+          g.stroke()
+        }
+        continue
+      }
+
+      if (b === 0 && K.fiber) {
+        // fiber bundle: three offset strands instead of one heavy line — the
+        // twisted-trunk look of the bonsai / banyan references
+        for (const off of [-0.34, 0, 0.34]) {
+          const o = widths[0] * off
+          g.lineWidth = widths[0] * (off === 0 ? 0.5 : 0.4)
+          g.globalAlpha = (off === 0 ? 0.98 : 0.8) * alphaMul
+          g.beginPath()
+          for (let k = from; k < to; k++) {
+            const i = this.order[k]
+            const p = this.parent[i]
+            const dx = X[i] - X[p]
+            const dy = Y[i] - Y[p]
+            const inv = 1 / (Math.hypot(dx, dy) || 1)
+            const nx = -dy * inv * o
+            const ny = dx * inv * o
+            g.moveTo(X[p] + nx, Y[p] + ny)
+            g.lineTo(X[i] + nx, Y[i] + ny)
+          }
+          g.stroke()
+        }
+        continue
+      }
+
+      // the caller's fit transform already scales stroke width — don't re-apply
+      g.lineWidth = widths[b]
+      g.beginPath()
+      for (let k = from; k < to; k += stride) {
+        const i = this.order[k]
+        const p = this.parent[i]
+        const gp = p >= 0 ? this.parent[p] : -1
+        if (!curved || gp < 0) {
+          g.moveTo(X[p], Y[p])
+          g.lineTo(X[i], Y[i])
+        } else {
+          g.moveTo((X[gp] + X[p]) / 2, (Y[gp] + Y[p]) / 2)
+          g.quadraticCurveTo(X[p], Y[p], (X[p] + X[i]) / 2, (Y[p] + Y[i]) / 2)
+          if (this.childCount[i] === 0) g.lineTo(X[i], Y[i])
+        }
+      }
+      g.stroke()
+    }
+  }
+
+  /**
+   * Render the structural wood (halo + buckets 0–3) once, at rest pose, into
+   * the bake canvas — world coordinates, resolution matched to the current
+   * on-screen scale (capped for memory; a close zoom prefers live drawing,
+   * see the bake target in update()). bakedFlag records exactly which nodes
+   * the image carries so draw() can stroke late arrivals live.
+   */
+  private renderBake(
+    h: number,
+    stops: string[],
+    style: string,
+    widths: number[],
+    u: number,
+    screenScale: number,
+    key: string
+  ): void {
+    const st = this.bucketStart
+    if (st[4] - st[0] <= 0) {
+      this.bakeValid = false
+      return
+    }
+    const pad = widths[0] * 1.6 + 4 * u
+    const x0 = this.minX - pad
+    const y0 = this.minY - pad
+    const ww = Math.max(1, this.maxX + pad - x0)
+    const wh = Math.max(1, Math.max(this.maxY, this.rootY) + pad - y0)
+    const req = Math.min(3, Math.max(0.02, screenScale))
+    let s = req
+    const MAXP = 1600
+    if (ww * s > MAXP) s = MAXP / ww
+    if (wh * s > MAXP) s = MAXP / wh
+    const pw = Math.max(8, Math.ceil(ww * s))
+    const ph = Math.max(8, Math.ceil(wh * s))
+    if (!this.bakeCanvas) {
+      this.bakeCanvas = document.createElement('canvas')
+      this.bakeCtx = this.bakeCanvas.getContext('2d')
+    }
+    const bc = this.bakeCanvas
+    const bg = this.bakeCtx
+    if (!bg) {
+      this.bakeValid = false
+      return
+    }
+    if (bc.width < pw) bc.width = Math.ceil(pw * 1.25)
+    if (bc.height < ph) bc.height = Math.ceil(ph * 1.25)
+    bg.setTransform(1, 0, 0, 1, 0, 0)
+    bg.clearRect(0, 0, bc.width, bc.height)
+    bg.setTransform(s, 0, 0, s, -x0 * s, -y0 * s)
+    bg.lineCap = 'round'
+    bg.lineJoin = 'round'
+    // rest pose on purpose: the bake is the still tree; sway lives on twigs
+    this.drawHalo(bg, this.nodesX, this.nodesY, stops, style, widths, 1, screenScale)
+    this.drawCores(
+      bg, 0, 4, this.nodesX, this.nodesY, stops, style, widths, u, this.segLen * screenScale, 1
+    )
+    this.bakedFlag.fill(0, 0, this.nNodes)
+    for (let k = st[0]; k < st[4]; k++) this.bakedFlag[this.order[k]] = 1
+    this.bakeX0 = x0
+    this.bakeY0 = y0
+    this.bakeWw = ww
+    this.bakeWh = wh
+    this.bakePw = pw
+    this.bakePh = ph
+    this.bakeScale = s
+    this.bakeReqScale = req
+    this.bakeKey = key
+    this.bakeTimer = 0
+    this.bakeValid = true
   }
 
   /** Bonsai vessel: an outlined trapezoid pot with rim and feet, drawn behind the trunk. */

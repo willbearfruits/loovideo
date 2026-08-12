@@ -388,7 +388,10 @@ export class FloraSystem implements VisualSystem {
           const wy = this.cam.focusY + (cy - h * 0.5) / Z
           this.flock.spawnBurst(wx, wy, h / 1080)
         } else if (inp.place.kind === 'fell' && this.trees.length > 0) {
-          // the axe: fell ONLY the tapped tree; it does not come back
+          // the axe: strike the tapped tree. The FIRST strike coppices — it
+          // comes down to a stump and epicormic shoots regrow from the cut.
+          // A second strike within ~25s uproots it for good (the old
+          // remove-this-tree behavior lives one extra tap away).
           const wx = this.cam.focusX + (cx - w / 2) / Z
           let best = 0
           let bestD = Infinity
@@ -399,8 +402,16 @@ export class FloraSystem implements VisualSystem {
               best = i
             }
           }
-          this.trees[best].fell()
-          this.axed.add(this.trees[best])
+          const struck = this.trees[best]
+          if (struck.recentlyCut) {
+            struck.fell()
+            this.axed.add(struck)
+          } else {
+            struck.coppice()
+            // a coppiced tree is alive again — never leave it wearing a
+            // half-finished succession fade
+            this.treeFade[best] = 0
+          }
         } else if (this.treeSpec) {
           // through the camera: screen point → world ground position
           const wx = this.cam.focusX + (cx - w / 2) / Z
