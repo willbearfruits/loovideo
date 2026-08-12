@@ -144,6 +144,7 @@ export class FloraSystem implements VisualSystem {
       daytime: p.num('flora.daytime'),
       leaves: p.num('flora.leaves'),
       leafSize: p.num('flora.leafSize') || 1,
+      leafCount: p.num('flora.leafCount') || 1,
       birdSize: p.num('flora.birdSize') || 1,
       stroke: p.str('flora.stroke') || 'ink',
       kind: (p.str('flora.flockKind') || 'starlings') as FlockKind
