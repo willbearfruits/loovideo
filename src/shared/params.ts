@@ -188,7 +188,7 @@ export const PARAMS: ParamDef[] = [
   n('flora.leafSize', 'Leaf Size', 0.3, 3, 1, 'flora'),
   n('flora.leafCount', 'Leaf Count', 0.05, 2, 1, 'flora'),
   n('flora.birdSize', 'Bird Size', 0.3, 3, 1, 'flora'),
-  n('flora.birds', 'Bird Count', 0.05, 2, 1, 'flora', false),
+  n('flora.birds', 'Bird Count', 0.05, 6, 1, 'flora', false),
   // Season and time of day are plain modulatable phases, so a slow LFO routed
   // at either one makes the year or the day pass on its own.
   // 0 spring · 0.25 summer · 0.5 autumn · 0.75 winter · 1 wraps to spring

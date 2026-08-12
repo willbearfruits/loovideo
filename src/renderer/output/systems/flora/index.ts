@@ -383,7 +383,10 @@ export class FloraSystem implements VisualSystem {
         const cx = inp.place.x * w
         const cy = inp.place.y * h
         if (inp.place.kind === 'birds') {
-          this.flock.spawnBurst(cx, cy, h / 1080)
+          // the flock lives in world space now — send the burst there
+          const wx = this.cam.focusX + (cx - w / 2) / Z
+          const wy = this.cam.focusY + (cy - h * 0.5) / Z
+          this.flock.spawnBurst(wx, wy, h / 1080)
         } else if (inp.place.kind === 'fell' && this.trees.length > 0) {
           // the axe: fell ONLY the tapped tree; it does not come back
           const wx = this.cam.focusX + (cx - w / 2) / Z
@@ -494,22 +497,15 @@ export class FloraSystem implements VisualSystem {
         g.restore()
       }
 
-      // roosting: living tree tips become the flock's perches, transformed to
-      // the flock's screen space through the same camera
+      // roosting: living tree tips become the flock's perches — RAW world
+      // coordinates, because the flock now lives in the world itself and is
+      // drawn through the same camera as the mid-plane trees
       this.perchScratch.length = 0
       if (wantFlock && this.trees.length > 0 && drive.silence > 0.25) {
         const per = Math.max(6, Math.floor(48 / this.trees.length))
-        const world: { x: number; y: number }[] = []
         for (let ti = 0; ti < this.trees.length; ti++) {
           if ((this.treePlanes[ti] ?? 1) !== 1) continue
-          this.trees[ti].perchTips(world, world.length + per)
-        }
-        const Z = this.fitScale * this.cam.currentZoom
-        for (const a of world) {
-          this.perchScratch.push({
-            x: w / 2 + (a.x - this.cam.focusX) * Z,
-            y: anchorY + (a.y - this.cam.focusY) * Z
-          })
+          this.trees[ti].perchTips(this.perchScratch, this.perchScratch.length + per)
         }
       }
       drive.perches = this.perchScratch.length > 0 ? this.perchScratch : undefined
@@ -538,7 +534,13 @@ export class FloraSystem implements VisualSystem {
       )
       this.flock.resize(Math.max(24, want), w, h)
       this.flock.update(dt, time, w, h, drive)
+      // the flock is part of the world: drawn through the mid-plane camera,
+      // it stays with the grove when you pan away — and comes back into
+      // frame when you return, instead of being wallpapered to the glass
+      g.save()
+      this.cam.apply(g, w / 2, horizonY, this.fitScale)
       this.flock.draw(g, w, h, time, stops, drive)
+      g.restore()
     }
 
     // --- the lake: the finished world reflected below the shoreline ----------
